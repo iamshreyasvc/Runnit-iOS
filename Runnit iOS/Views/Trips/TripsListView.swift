@@ -27,12 +27,32 @@ struct TripsListView: View {
     @State private var showingAdd = false
     @State private var selectedTrip: Trip?
     @State private var mapSelection: PersistentIdentifier?
+    @State private var selectedYear: Int? = {
+        #if DEBUG
+        if let raw = ProcessInfo.processInfo.environment["YEAR"], let y = Int(raw) { return y }
+        #endif
+        return nil
+    }()
 
+    /// Trips for this tab (before the year filter).
     private var shown: [Trip] {
         switch filter {
         case .upcoming: return allTrips.filter(\.isUpcoming).sorted { $0.departureDate < $1.departureDate }
         case .past:     return allTrips.filter(\.isPast).sorted { $0.departureDate > $1.departureDate }
         }
+    }
+
+    /// Distinct years present in this tab, ordered soonest-first for Upcoming
+    /// and most-recent-first for Past.
+    private var years: [Int] {
+        let set = Set(shown.map { Calendar.current.component(.year, from: $0.departureDate) })
+        return set.sorted(by: filter == .upcoming ? (<) : (>))
+    }
+
+    /// Trips after applying the selected year pill.
+    private var displayed: [Trip] {
+        guard let year = selectedYear, years.contains(year) else { return shown }
+        return shown.filter { Calendar.current.component(.year, from: $0.departureDate) == year }
     }
 
     var body: some View {
@@ -44,12 +64,13 @@ struct TripsListView: View {
                 } else {
                     VStack(spacing: 0) {
                         mapHeader
+                        if years.count > 1 { yearPills }
                         tripList
                     }
                 }
             }
             .sectionHeader(filter.rawValue, systemImage: filter.symbol, tint: filter.accent,
-                           subtitle: shown.isEmpty ? nil : "\(shown.count) \(shown.count == 1 ? "trip" : "trips")")
+                           subtitle: shown.isEmpty ? nil : "\(displayed.count) \(displayed.count == 1 ? "trip" : "trips")")
             .navigationDestination(item: $selectedTrip) { TripDetailView(trip: $0) }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -77,7 +98,7 @@ struct TripsListView: View {
 
     private var mapHeader: some View {
         Map(selection: $mapSelection) {
-            ForEach(shown) { trip in
+            ForEach(displayed) { trip in
                 MapPolyline(coordinates: [trip.origin.coordinate, trip.destination.coordinate])
                     .stroke(trip.type.accent.opacity(0.85),
                             style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [1, 6]))
@@ -93,16 +114,45 @@ struct TripsListView: View {
         .padding([.horizontal, .top])
         .onChange(of: mapSelection) { _, id in
             guard let id else { return }
-            selectedTrip = shown.first { $0.persistentModelID == id }
+            selectedTrip = displayed.first { $0.persistentModelID == id }
             mapSelection = nil
         }
+    }
+
+    // MARK: Year filter pills
+
+    private var yearPills: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                yearPill(title: "All", isSelected: selectedYear == nil) { selectedYear = nil }
+                ForEach(years, id: \.self) { year in
+                    yearPill(title: String(year), isSelected: selectedYear == year) { selectedYear = year }
+                }
+            }
+            .padding(.horizontal)
+        }
+        .padding(.top, 12)
+    }
+
+    private func yearPill(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            withAnimation(.snappy) { action() }
+        } label: {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(isSelected ? .white : .primary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .glassEffect(isSelected ? .regular.tint(filter.accent) : .regular, in: .capsule)
+        }
+        .buttonStyle(.plain)
     }
 
     private var tripList: some View {
         ScrollView {
             GlassEffectContainer(spacing: 16) {
                 LazyVStack(spacing: 16) {
-                    ForEach(shown) { trip in
+                    ForEach(displayed) { trip in
                         NavigationLink {
                             TripDetailView(trip: trip)
                         } label: {

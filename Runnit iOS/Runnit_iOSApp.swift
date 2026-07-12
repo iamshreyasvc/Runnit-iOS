@@ -64,11 +64,22 @@ enum SampleSeeder {
         let bigSur = Place(name: "Big Sur", subtitle: "California",
                            latitude: 36.2704, longitude: -121.8081,
                            isoCountryCode: "US", country: "United States", locality: "Big Sur")
+        let cdg = Place(name: "Paris–Charles de Gaulle (CDG)", subtitle: "Paris, France",
+                        latitude: 49.0097, longitude: 2.5479,
+                        isoCountryCode: "FR", country: "France", locality: "Paris")
+        let hnd = Place(name: "Tokyo Haneda (HND)", subtitle: "Tokyo, Japan",
+                        latitude: 35.5494, longitude: 139.7798,
+                        isoCountryCode: "JP", country: "Japan", locality: "Tokyo")
 
         func daysFromNow(_ d: Int) -> Date {
             Calendar.current.date(byAdding: .day, value: d, to: Date()) ?? Date()
         }
+        func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
+            Calendar.current.date(from: DateComponents(year: year, month: month, day: day)) ?? Date()
+        }
+        let thisYear = Calendar.current.component(.year, from: Date())
 
+        // Upcoming — spanning this year and next, so the year pills appear.
         let upcomingFlight = Trip(
             type: .flight, origin: sfo, destination: jfk,
             departureDate: daysFromNow(6),
@@ -81,13 +92,36 @@ enum SampleSeeder {
             origin: sfo, destination: bigSur,
             departureDate: daysFromNow(15)
         )
+        let upcomingNextYear = Trip(
+            type: .flight, title: "Cherry Blossoms",
+            origin: sfo, destination: hnd,
+            departureDate: date(thisYear + 1, 4, 2),
+            arrivalDate: date(thisYear + 1, 4, 3),
+            operatorName: "ANA", vehicleNumber: "NH 7"
+        )
+
+        // Past — spanning a few prior years.
         let pastFlight = Trip(
             type: .flight, origin: jfk, destination: lhr,
             departureDate: daysFromNow(-40),
             arrivalDate: daysFromNow(-40).addingTimeInterval(7 * 3600),
             operatorName: "British Airways", vehicleNumber: "BA 178"
         )
+        let pastLastYear = Trip(
+            type: .flight, origin: sfo, destination: cdg,
+            departureDate: date(thisYear - 1, 9, 12),
+            arrivalDate: date(thisYear - 1, 9, 13),
+            operatorName: "Air France", vehicleNumber: "AF 83"
+        )
+        let pastTwoYearsAgo = Trip(
+            type: .train, title: "Alps Getaway",
+            origin: cdg, destination: lhr,
+            departureDate: date(thisYear - 2, 6, 20),
+            arrivalDate: date(thisYear - 2, 6, 20).addingTimeInterval(2.5 * 3600),
+            operatorName: "Eurostar", vehicleNumber: "ES 9024"
+        )
 
-        return [upcomingFlight, upcomingRoadTrip, pastFlight]
+        return [upcomingFlight, upcomingRoadTrip, upcomingNextYear,
+                pastFlight, pastLastYear, pastTwoYearsAgo]
     }
 }
