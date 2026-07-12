@@ -15,7 +15,15 @@ enum AppTab: String, Hashable {
 
 struct RootTabView: View {
     @AppStorage(PrefKey.appearance) private var appearanceRaw = AppAppearance.dark.rawValue
-    private var appearance: AppAppearance { AppAppearance(rawValue: appearanceRaw) ?? .dark }
+    private var appearance: AppAppearance {
+        #if DEBUG
+        if let raw = ProcessInfo.processInfo.environment["APPEARANCE"],
+           let a = AppAppearance(rawValue: raw) {
+            return a
+        }
+        #endif
+        return AppAppearance(rawValue: appearanceRaw) ?? .dark
+    }
 
     @State private var selection: AppTab = {
         #if DEBUG
