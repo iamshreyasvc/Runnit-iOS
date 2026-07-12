@@ -25,6 +25,7 @@ struct TripsListView: View {
 
     @Query(sort: \Trip.departureDate, order: .forward) private var allTrips: [Trip]
     @State private var showingAdd = false
+    @State private var showingFullMap = false
     @State private var selectedTrip: Trip?
     @State private var mapSelection: PersistentIdentifier?
     @State private var selectedYear: Int? = {
@@ -84,10 +85,16 @@ struct TripsListView: View {
             .sheet(isPresented: $showingAdd) {
                 AddTripFlowView()
             }
+            .fullScreenCover(isPresented: $showingFullMap) {
+                FullMapView(trips: displayed, title: filter.rawValue)
+            }
             .onAppear {
                 #if DEBUG
                 if ProcessInfo.processInfo.environment["SHOW_ADD"] == "1", filter == .upcoming {
                     showingAdd = true
+                }
+                if ProcessInfo.processInfo.environment["SHOW_FULLMAP"] == "1", filter == .upcoming {
+                    showingFullMap = true
                 }
                 #endif
             }
@@ -111,6 +118,18 @@ struct TripsListView: View {
         .mapStyle(.standard(elevation: .realistic))
         .frame(height: 320)
         .clipShape(.rect(cornerRadius: 24))
+        .overlay(alignment: .topTrailing) {
+            Button {
+                showingFullMap = true
+            } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(10)
+                    .glassEffect(.regular, in: .circle)
+            }
+            .buttonStyle(.plain)
+            .padding(12)
+        }
         .padding([.horizontal, .top])
         .onChange(of: mapSelection) { _, id in
             guard let id else { return }

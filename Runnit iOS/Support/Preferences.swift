@@ -9,9 +9,11 @@
 import SwiftUI
 
 enum PrefKey {
-    static let appearance = "pref.appearance"
-    static let distanceUnit = "pref.distanceUnit"
-    static let displayName = "pref.displayName"
+    // NOTE: keys must not contain a dot — UserDefaults KVO treats a dotted key
+    // as a key path, which breaks @AppStorage live updates across views.
+    static let appearance = "prefAppearance"
+    static let distanceUnit = "prefDistanceUnit"
+    static let displayName = "prefDisplayName"
 }
 
 enum AppAppearance: String, CaseIterable, Identifiable {
