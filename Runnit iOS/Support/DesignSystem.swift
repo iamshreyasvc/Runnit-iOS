@@ -66,7 +66,45 @@ enum Format {
     }
 }
 
+/// A richer navigation-bar title: a colored section icon, the title, and an
+/// optional count subtitle — used across all top-level pages.
+struct SectionHeader: ViewModifier {
+    let title: String
+    let systemImage: String
+    let tint: Color
+    var subtitle: String? = nil
+
+    func body(content: Content) -> some View {
+        content
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 10) {
+                        Image(systemName: systemImage)
+                            .font(.footnote.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 28, height: 28)
+                            .background(tint.gradient, in: .circle)
+                            .shadow(color: tint.opacity(0.5), radius: 5, y: 2)
+                        VStack(alignment: .leading, spacing: -1) {
+                            Text(title).font(.headline.weight(.bold))
+                            if let subtitle {
+                                Text(subtitle).font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+    }
+}
+
 extension View {
+    /// Styled section header for a top-level page's navigation bar.
+    func sectionHeader(_ title: String, systemImage: String, tint: Color, subtitle: String? = nil) -> some View {
+        modifier(SectionHeader(title: title, systemImage: systemImage, tint: tint, subtitle: subtitle))
+    }
+
     /// Convenience for wrapping content in a glass rounded rectangle, with an
     /// optional color tint for a more vivid, mode-colored card.
     func glassCard(cornerRadius: CGFloat = 22, tint: Color? = nil) -> some View {

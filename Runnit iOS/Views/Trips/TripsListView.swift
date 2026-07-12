@@ -16,7 +16,8 @@ enum TripFilter: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     var accent: Color { self == .upcoming ? .blue : .indigo }
-    var emptySymbol: String { self == .upcoming ? "airplane.departure" : "clock.arrow.circlepath" }
+    var symbol: String { self == .upcoming ? "airplane.departure" : "clock.arrow.circlepath" }
+    var emptySymbol: String { symbol }
 }
 
 struct TripsListView: View {
@@ -47,8 +48,8 @@ struct TripsListView: View {
                     }
                 }
             }
-            .navigationTitle(filter.rawValue)
-            .navigationBarTitleDisplayMode(.inline)
+            .sectionHeader(filter.rawValue, systemImage: filter.symbol, tint: filter.accent,
+                           subtitle: shown.isEmpty ? nil : "\(shown.count) \(shown.count == 1 ? "trip" : "trips")")
             .navigationDestination(item: $selectedTrip) { TripDetailView(trip: $0) }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {

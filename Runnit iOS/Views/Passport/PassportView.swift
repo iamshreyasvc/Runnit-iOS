@@ -38,7 +38,8 @@ struct PassportView: View {
                 }
                 }
             }
-            .navigationTitle("Passport")
+            .sectionHeader("Passport", systemImage: "book.closed", tint: .indigo,
+                           subtitle: stats.totalTrips == 0 ? nil : "\(stats.uniqueCountries.count) \(stats.uniqueCountries.count == 1 ? "country" : "countries") visited")
         }
     }
 

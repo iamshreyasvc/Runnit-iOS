@@ -34,7 +34,7 @@ struct AccountView: View {
                     .padding()
                 }
             }
-            .navigationTitle("Account")
+            .sectionHeader("Account", systemImage: "person.crop.circle", tint: .cyan)
         }
     }
 
