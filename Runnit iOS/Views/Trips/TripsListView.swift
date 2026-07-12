@@ -39,22 +39,22 @@ struct TripsListView: View {
     /// Trips for this tab (before the year filter).
     private var shown: [Trip] {
         switch filter {
-        case .upcoming: return allTrips.filter(\.isUpcoming).sorted { $0.departureDate < $1.departureDate }
-        case .past:     return allTrips.filter(\.isPast).sorted { $0.departureDate > $1.departureDate }
+        case .upcoming: return allTrips.filter(\.isUpcoming).sorted { $0.startDate < $1.startDate }
+        case .past:     return allTrips.filter(\.isPast).sorted { $0.startDate > $1.startDate }
         }
     }
 
     /// Distinct years present in this tab, ordered soonest-first for Upcoming
     /// and most-recent-first for Past.
     private var years: [Int] {
-        let set = Set(shown.map { Calendar.current.component(.year, from: $0.departureDate) })
+        let set = Set(shown.map { Calendar.current.component(.year, from: $0.startDate) })
         return set.sorted(by: filter == .upcoming ? (<) : (>))
     }
 
     /// Trips after applying the selected year pill.
     private var displayed: [Trip] {
         guard let year = selectedYear, years.contains(year) else { return shown }
-        return shown.filter { Calendar.current.component(.year, from: $0.departureDate) == year }
+        return shown.filter { Calendar.current.component(.year, from: $0.startDate) == year }
     }
 
     var body: some View {
@@ -97,6 +97,10 @@ struct TripsListView: View {
                 if ProcessInfo.processInfo.environment["SHOW_FULLMAP"] == "1", filter == .upcoming {
                     showingFullMap = true
                 }
+                if let raw = ProcessInfo.processInfo.environment["OPEN_TRIP_INDEX"],
+                   let i = Int(raw), filter == .upcoming, displayed.indices.contains(i) {
+                    selectedTrip = displayed[i]
+                }
                 #endif
             }
         }
@@ -107,11 +111,15 @@ struct TripsListView: View {
     private var mapHeader: some View {
         Map(selection: $mapSelection) {
             ForEach(displayed) { trip in
-                MapPolyline(coordinates: [trip.origin.coordinate, trip.destination.coordinate])
-                    .stroke(trip.type.accent.opacity(0.85),
-                            style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [1, 6]))
-                Marker(trip.destination.displayName, systemImage: trip.type.symbol,
-                       coordinate: trip.destination.coordinate)
+                // One dashed line per leg, tinted by that leg's mode.
+                ForEach(trip.displaySegments) { segment in
+                    MapPolyline(coordinates: [segment.origin.coordinate, segment.destination.coordinate])
+                        .stroke(segment.type.accent.opacity(0.85),
+                                style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [1, 6]))
+                }
+                // A single tappable marker at the trip's final destination.
+                Marker(trip.endPlace.displayName, systemImage: trip.type.symbol,
+                       coordinate: trip.endPlace.coordinate)
                     .tint(trip.type.accent)
                     .tag(trip.persistentModelID)
             }

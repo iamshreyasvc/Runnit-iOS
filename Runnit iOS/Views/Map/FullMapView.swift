@@ -22,11 +22,13 @@ struct FullMapView: View {
         NavigationStack {
             Map(selection: $mapSelection) {
                 ForEach(trips) { trip in
-                    MapPolyline(coordinates: [trip.origin.coordinate, trip.destination.coordinate])
-                        .stroke(trip.type.accent.opacity(0.85),
-                                style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [1, 6]))
-                    Marker(trip.destination.displayName, systemImage: trip.type.symbol,
-                           coordinate: trip.destination.coordinate)
+                    ForEach(trip.displaySegments) { segment in
+                        MapPolyline(coordinates: [segment.origin.coordinate, segment.destination.coordinate])
+                            .stroke(segment.type.accent.opacity(0.85),
+                                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [1, 6]))
+                    }
+                    Marker(trip.endPlace.displayName, systemImage: trip.type.symbol,
+                           coordinate: trip.endPlace.coordinate)
                         .tint(trip.type.accent)
                         .tag(trip.persistentModelID)
                 }

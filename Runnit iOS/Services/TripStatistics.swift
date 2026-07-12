@@ -37,7 +37,7 @@ struct TripStatistics {
     var uniqueCountries: [CountryVisit] {
         var counts: [String: (name: String, flag: String, count: Int)] = [:]
         for trip in pastTrips {
-            for place in [trip.origin, trip.destination] {
+            for place in trip.allPlaces {
                 guard let code = place.isoCountryCode, !code.isEmpty else { continue }
                 let existing = counts[code]
                 counts[code] = (
@@ -55,7 +55,7 @@ struct TripStatistics {
     var uniqueCities: Int {
         var cities = Set<String>()
         for trip in pastTrips {
-            for place in [trip.origin, trip.destination] {
+            for place in trip.allPlaces {
                 if let locality = place.locality, !locality.isEmpty {
                     cities.insert(locality)
                 }
@@ -64,9 +64,13 @@ struct TripStatistics {
         return cities.count
     }
 
+    /// Counts every leg's mode, so a multi-modal trip contributes to each mode
+    /// it uses.
     var modeBreakdown: [ModeBreakdown] {
         TripType.allCases.compactMap { type in
-            let count = pastTrips.filter { $0.type == type }.count
+            let count = pastTrips.reduce(0) { total, trip in
+                total + trip.modeSequence.filter { $0 == type }.count
+            }
             return count > 0 ? ModeBreakdown(type: type, count: count) : nil
         }
     }

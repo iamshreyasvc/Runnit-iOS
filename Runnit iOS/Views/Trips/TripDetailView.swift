@@ -2,8 +2,9 @@
 //  TripDetailView.swift
 //  Runnit iOS
 //
-//  Full trip detail: route map, live-status seam, mode-specific details, and
-//  (for road trips) a one-tap Apple Maps directions button.
+//  Full trip detail: a multi-leg route map, an overall summary, a per-leg
+//  itinerary (with mode-specific details and per-drive Apple Maps directions),
+//  and notes.
 //
 
 import SwiftUI
@@ -29,16 +30,13 @@ struct TripDetailView: View {
                     .frame(height: 220)
                     .clipShape(.rect(cornerRadius: 24))
 
-                if trip.type == .roadTrip {
-                    directionsButton
-                }
+                summaryCard
 
-                if trip.type.isScheduledTransit {
+                if !trip.isMultiModal, trip.type.isScheduledTransit {
                     statusCard
-                    transitDetailsCard
                 }
 
-                routeCard
+                itinerary
 
                 if let notes = trip.notes, !notes.isEmpty {
                     infoCard(title: "Notes") {
@@ -48,7 +46,7 @@ struct TripDetailView: View {
             }
             .padding()
         }
-        .navigationTitle(trip.type.label)
+        .navigationTitle(trip.isMultiModal ? "Trip" : trip.type.label)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -77,28 +75,27 @@ struct TripDetailView: View {
         }
     }
 
-    // MARK: Sections
+    // MARK: Summary
 
-    private var directionsButton: some View {
-        VStack(spacing: 8) {
-            Button {
-                MapsLauncher.openDirections(from: trip.origin, to: trip.destination)
-            } label: {
-                Label("Open in Apple Maps", systemImage: "location.north.line.fill")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-            }
-            .buttonStyle(.glassProminent)
-            .tint(trip.type.accent)
-
-            if let arrival = trip.arrivalDate {
-                Label(
-                    "\(Format.duration(arrival.timeIntervalSince(trip.departureDate))) drive · arrive \(Format.dateTime(arrival))",
-                    systemImage: "car.fill"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    private var summaryCard: some View {
+        infoCard(title: trip.displayTitle) {
+            VStack(spacing: 12) {
+                HStack {
+                    Label("\(trip.legCount) \(trip.legCount == 1 ? "leg" : "legs")",
+                          systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Spacer()
+                    Text(Format.distance(trip.distanceMeters)).font(.callout.weight(.medium))
+                }
+                Divider()
+                HStack {
+                    Label(Format.dateTime(trip.startDate), systemImage: "calendar")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Spacer()
+                    Text(trip.isPast ? "Completed" : Format.relative(trip.startDate))
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(trip.isPast ? .secondary : trip.type.accent)
+                }
             }
         }
     }
@@ -113,50 +110,100 @@ struct TripDetailView: View {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text("Departs")
                         .font(.caption).foregroundStyle(.secondary)
-                    Text(Format.dateTime(trip.departureDate))
+                    Text(Format.dateTime(trip.startDate))
                         .font(.callout.weight(.medium))
                 }
             }
         }
     }
 
-    private var transitDetailsCard: some View {
-        infoCard(title: "\(trip.type.label) details") {
-            VStack(spacing: 10) {
-                detailRow("Operator", trip.operatorName)
-                detailRow(trip.type.numberLabel, trip.vehicleNumber)
-                detailRow(trip.type.boardingLabel, trip.boardingPoint)
-                detailRow("Seat", trip.seat)
-                detailRow("Confirmation", trip.confirmation)
+    // MARK: Itinerary
+
+    private var itinerary: some View {
+        VStack(spacing: 16) {
+            ForEach(Array(trip.displaySegments.enumerated()), id: \.element.id) { idx, segment in
+                legCard(index: idx, segment: segment)
             }
         }
     }
 
-    private var routeCard: some View {
-        infoCard(title: "Route") {
-            VStack(spacing: 10) {
-                routeEndpoint(icon: "circle.circle", label: "From", place: trip.origin,
-                              time: trip.departureDate)
-                Divider()
-                routeEndpoint(icon: "mappin.circle.fill", label: "To", place: trip.destination,
-                              time: trip.arrivalDate)
-                Divider()
-                HStack {
-                    Label("Distance", systemImage: "ruler")
-                        .font(.callout).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(Format.distance(trip.distanceMeters)).font(.callout.weight(.medium))
+    private func legCard(index: Int, segment: TripSegment) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: segment.type.symbol)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .background(segment.type.gradient, in: .circle)
+                VStack(alignment: .leading, spacing: 1) {
+                    if trip.isMultiModal {
+                        Text("Leg \(index + 1)").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Text(segment.type.label).font(.headline)
                 }
+                Spacer()
             }
+
+            routeEndpoint(icon: "circle.circle", label: "From", place: segment.origin,
+                          time: segment.departureDate, tint: segment.type.accent)
+            Divider()
+            routeEndpoint(icon: "mappin.circle.fill", label: "To", place: segment.destination,
+                          time: segment.arrivalDate, tint: segment.type.accent)
+
+            if segment.type.isScheduledTransit, hasTransitDetails(segment) {
+                Divider()
+                transitDetails(segment)
+            }
+
+            HStack {
+                Label("Distance", systemImage: "ruler")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Text(Format.distance(segment.distanceMeters)).font(.caption.weight(.medium))
+            }
+
+            if segment.type == .roadTrip {
+                directionsButton(segment)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard(tint: segment.type.accent.opacity(0.22))
+    }
+
+    private func directionsButton(_ segment: TripSegment) -> some View {
+        Button {
+            MapsLauncher.openDirections(from: segment.origin, to: segment.destination)
+        } label: {
+            Label("Open in Apple Maps", systemImage: "location.north.line.fill")
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+        }
+        .buttonStyle(.glassProminent)
+        .tint(segment.type.accent)
+    }
+
+    private func hasTransitDetails(_ s: TripSegment) -> Bool {
+        [s.operatorName, s.vehicleNumber, s.boardingPoint, s.seat, s.confirmation]
+            .contains { ($0 ?? "").isEmpty == false }
+    }
+
+    private func transitDetails(_ s: TripSegment) -> some View {
+        VStack(spacing: 8) {
+            detailRow("Operator", s.operatorName)
+            detailRow(s.type.numberLabel, s.vehicleNumber)
+            detailRow(s.type.boardingLabel, s.boardingPoint)
+            detailRow("Seat", s.seat)
+            detailRow("Confirmation", s.confirmation)
         }
     }
 
     // MARK: Building blocks
 
-    private func routeEndpoint(icon: String, label: String, place: Place, time: Date?) -> some View {
+    private func routeEndpoint(icon: String, label: String, place: Place, time: Date?, tint: Color) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
-                .foregroundStyle(trip.type.accent)
+                .foregroundStyle(tint)
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
                 Text(label).font(.caption).foregroundStyle(.secondary)
@@ -194,27 +241,40 @@ struct TripDetailView: View {
     }
 }
 
-/// Small non-interactive map showing the origin → destination route.
+/// Small non-interactive map showing every leg of the trip.
 struct RouteMapView: View {
     let trip: Trip
 
+    private var segments: [TripSegment] { trip.displaySegments }
+
     var body: some View {
         Map(initialPosition: .region(region)) {
-            Marker(trip.origin.displayName, systemImage: "circle.circle", coordinate: trip.origin.coordinate)
-                .tint(.gray)
-            Marker(trip.destination.displayName, systemImage: trip.type.symbol, coordinate: trip.destination.coordinate)
-                .tint(trip.type.accent)
-            MapPolyline(coordinates: [trip.origin.coordinate, trip.destination.coordinate])
-                .stroke(trip.type.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [2, 6]))
+            // First origin marker.
+            if let first = segments.first {
+                Marker(first.origin.displayName, systemImage: "circle.circle",
+                       coordinate: first.origin.coordinate)
+                    .tint(.gray)
+            }
+            ForEach(segments) { segment in
+                MapPolyline(coordinates: [segment.origin.coordinate, segment.destination.coordinate])
+                    .stroke(segment.type.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [2, 6]))
+                Marker(segment.destination.displayName, systemImage: segment.type.symbol,
+                       coordinate: segment.destination.coordinate)
+                    .tint(segment.type.accent)
+            }
         }
         .mapStyle(.standard(elevation: .realistic))
         .disabled(true)
     }
 
+    private var coords: [CLLocationCoordinate2D] {
+        segments.flatMap { [$0.origin.coordinate, $0.destination.coordinate] }
+    }
+
     private var region: MKCoordinateRegion {
-        let coords = [trip.origin.coordinate, trip.destination.coordinate]
-        let lats = coords.map(\.latitude)
-        let lons = coords.map(\.longitude)
+        let all = coords.isEmpty ? [CLLocationCoordinate2D(latitude: 0, longitude: 0)] : coords
+        let lats = all.map(\.latitude)
+        let lons = all.map(\.longitude)
         let center = CLLocationCoordinate2D(
             latitude: (lats.min()! + lats.max()!) / 2,
             longitude: (lons.min()! + lons.max()!) / 2
@@ -228,9 +288,16 @@ struct RouteMapView: View {
 }
 
 #if DEBUG
-#Preview {
+#Preview("Single") {
     NavigationStack {
         TripDetailView(trip: .sampleFlight)
+    }
+    .modelContainer(PreviewData.container)
+}
+
+#Preview("Multi-modal") {
+    NavigationStack {
+        TripDetailView(trip: .sampleMultiModal)
     }
     .modelContainer(PreviewData.container)
 }
