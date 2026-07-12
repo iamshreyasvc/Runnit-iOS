@@ -142,27 +142,36 @@ struct TripsListView: View {
 
     private var yearPills: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                yearPill(title: "All", isSelected: selectedYear == nil) { selectedYear = nil }
+            HStack(spacing: 4) {
+                yearOption(title: "All", year: nil)
                 ForEach(years, id: \.self) { year in
-                    yearPill(title: String(year), isSelected: selectedYear == year) { selectedYear = year }
+                    yearOption(title: String(year), year: year)
                 }
             }
+            .padding(5)
+            .glassEffect(.regular, in: .capsule)
             .padding(.horizontal)
         }
+        .scrollClipDisabled()
         .padding(.top, 12)
+        .padding(.bottom, 4)
     }
 
-    private func yearPill(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button {
-            withAnimation(.snappy) { action() }
+    private func yearOption(title: String, year: Int?) -> some View {
+        let isSelected = selectedYear == year
+        return Button {
+            withAnimation(.snappy) { selectedYear = year }
         } label: {
             Text(title)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(isSelected ? .white : .primary)
                 .padding(.horizontal, 16)
-                .padding(.vertical, 9)
-                .glassEffect(isSelected ? .regular.tint(filter.accent) : .regular, in: .capsule)
+                .padding(.vertical, 8)
+                .background {
+                    if isSelected {
+                        Capsule().fill(filter.accent.gradient)
+                    }
+                }
         }
         .buttonStyle(.plain)
     }
