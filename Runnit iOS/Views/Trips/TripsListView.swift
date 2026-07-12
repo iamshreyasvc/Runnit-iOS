@@ -28,6 +28,7 @@ struct TripsListView: View {
     @State private var showingFullMap = false
     @State private var selectedTrip: Trip?
     @State private var mapSelection: PersistentIdentifier?
+    @Namespace private var pillNamespace
     @State private var selectedYear: Int? = {
         #if DEBUG
         if let raw = ProcessInfo.processInfo.environment["YEAR"], let y = Int(raw) { return y }
@@ -151,6 +152,8 @@ struct TripsListView: View {
             .padding(5)
             .glassEffect(.regular, in: .capsule)
             .padding(.horizontal)
+            // Animate only the selection highlight; the card list swaps instantly.
+            .animation(.snappy(duration: 0.28), value: selectedYear)
         }
         .scrollClipDisabled()
         .padding(.top, 12)
@@ -160,7 +163,7 @@ struct TripsListView: View {
     private func yearOption(title: String, year: Int?) -> some View {
         let isSelected = selectedYear == year
         return Button {
-            withAnimation(.snappy) { selectedYear = year }
+            selectedYear = year
         } label: {
             Text(title)
                 .font(.subheadline.weight(.semibold))
@@ -169,7 +172,9 @@ struct TripsListView: View {
                 .padding(.vertical, 8)
                 .background {
                     if isSelected {
-                        Capsule().fill(filter.accent.gradient)
+                        Capsule()
+                            .fill(filter.accent.gradient)
+                            .matchedGeometryEffect(id: "yearHighlight", in: pillNamespace)
                     }
                 }
         }
