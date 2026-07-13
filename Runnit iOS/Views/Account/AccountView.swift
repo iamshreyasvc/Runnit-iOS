@@ -10,10 +10,12 @@ import SwiftData
 
 struct AccountView: View {
     @Query private var allTrips: [Trip]
+    @Environment(APIUsageTracker.self) private var usage
 
     @AppStorage(PrefKey.appearance) private var appearanceRaw = AppAppearance.dark.rawValue
     @AppStorage(PrefKey.distanceUnit) private var distanceUnitRaw = DistanceUnit.automatic.rawValue
     @AppStorage(PrefKey.displayName) private var displayName = "Traveler"
+    @AppStorage(PrefKey.flightAutoRefresh) private var flightAutoRefresh = false
 
     private var stats: TripStatistics { TripStatistics(trips: allTrips) }
     private var appVersion: String {
@@ -29,6 +31,7 @@ struct AccountView: View {
                         profileHeader
                         lifetimeStats
                         preferencesCard
+                        flightTrackingCard
                         aboutCard
                     }
                     .padding()
@@ -111,6 +114,52 @@ struct AccountView: View {
         .glassCard()
     }
 
+    // MARK: Flight tracking
+
+    private var flightTrackingCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Flight Tracking").font(.headline)
+
+            Toggle(isOn: $flightAutoRefresh) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Smart Auto-refresh")
+                    Text("Auto-update a flight once when you open it on the day of travel or while it's airborne. Off keeps every update manual.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .tint(.blue)
+
+            Divider()
+
+            HStack(spacing: 12) {
+                Image(systemName: "chart.bar.fill").foregroundStyle(.blue).frame(width: 26)
+                Text("API calls this month")
+                Spacer()
+                Text("\(usage.used) / \(APIUsageTracker.limit)")
+                    .foregroundStyle(usage.isExhausted ? Color.orange : Color.secondary)
+                    .fontWeight(.medium)
+            }
+
+            HStack(spacing: 12) {
+                Image(systemName: Secrets.hasAviationStackKey ? "key.fill" : "key")
+                    .foregroundStyle(Secrets.hasAviationStackKey ? .green : .orange)
+                    .frame(width: 26)
+                Text("AviationStack key")
+                Spacer()
+                Text(Secrets.hasAviationStackKey ? "Configured" : "Not set")
+                    .foregroundStyle(Secrets.hasAviationStackKey ? Color.secondary : Color.orange)
+                    .fontWeight(.medium)
+            }
+
+            if !Secrets.hasAviationStackKey {
+                Text("Copy Secrets.example.plist to \u{201C}Runnit iOS/Secrets.plist\u{201D} and paste your key to enable live tracking. Your key is gitignored and never committed.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard()
+    }
+
     // MARK: About
 
     private var aboutCard: some View {
@@ -137,6 +186,7 @@ struct AccountView: View {
 #Preview {
     AccountView()
         .modelContainer(PreviewData.container)
+        .environment(APIUsageTracker())
         .preferredColorScheme(.dark)
 }
 #endif

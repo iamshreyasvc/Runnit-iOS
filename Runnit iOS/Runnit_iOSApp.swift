@@ -11,20 +11,28 @@ import SwiftData
 @main
 struct Runnit_iOSApp: App {
     let container: ModelContainer
+    @State private var usage: APIUsageTracker
+    @State private var flightTracker: FlightTracker
 
     init() {
         do {
-            container = try ModelContainer(for: Trip.self, TripSegment.self)
+            container = try ModelContainer(for: Trip.self, TripSegment.self, FlightStatusRecord.self)
         } catch {
             fatalError("Failed to create ModelContainer: \(error)")
         }
         SampleSeeder.seedIfNeeded(container.mainContext)
         SampleSeeder.backfillSegmentsIfNeeded(container.mainContext)
+
+        let usage = APIUsageTracker()
+        _usage = State(initialValue: usage)
+        _flightTracker = State(initialValue: FlightTracker(usage: usage))
     }
 
     var body: some Scene {
         WindowGroup {
             RootTabView()
+                .environment(usage)
+                .environment(flightTracker)
         }
         .modelContainer(container)
     }

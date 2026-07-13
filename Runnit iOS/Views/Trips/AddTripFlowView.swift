@@ -31,7 +31,7 @@ private struct SegmentDraft: Identifiable {
 
 private enum WizardStep: Hashable {
     // Per-leg questions
-    case type, origin, destination, when, carrier, number, details, itinerary
+    case type, flightLookup, origin, destination, when, carrier, number, details, itinerary
     // Trip-level finish
     case name, notes, review
 }
@@ -78,13 +78,24 @@ struct AddTripFlowView: View {
     @State private var driveTime: TimeInterval?
     @State private var estimating = false
 
+    // Flight auto-fill
+    @Environment(FlightTracker.self) private var tracker
+    @State private var lookupNumber = ""
+    @State private var lookingUp = false
+    @State private var lookupMessage: String?
+    @State private var lookupApplied = false
+
     @AppStorage(PrefKey.appearance) private var appearanceRaw = AppAppearance.dark.rawValue
 
     private var steps: [WizardStep] {
         if finishing {
             return [.name, .notes, .review]
         }
-        var s: [WizardStep] = [.type, .origin, .destination, .when]
+        var s: [WizardStep] = [.type]
+        // Flights start with a number+date lookup that can auto-fill the rest;
+        // the manual steps stay available behind "Enter details manually".
+        if draft.type == .flight { s += [.flightLookup] }
+        s += [.origin, .destination, .when]
         s += draft.type.isScheduledTransit ? [.carrier, .number, .details] : []
         s += [.itinerary]
         return s
@@ -122,26 +133,47 @@ struct AddTripFlowView: View {
     // MARK: Chrome
 
     private var topBar: some View {
-        HStack(spacing: 12) {
-            if canGoBack {
-                Button { back() } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.headline)
-                        .padding(10)
-                        .glassEffect(.regular, in: .circle)
+        VStack(spacing: 12) {
+            HStack {
+                if canGoBack {
+                    Button { back() } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.headline)
+                            .padding(10)
+                            .glassEffect(.regular, in: .circle)
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.opacity)
                 }
-                .buttonStyle(.plain)
-                .transition(.opacity)
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
-
-            ProgressView(value: Double(index + 1), total: Double(steps.count))
-                .tint(accent)
-
-            Button("Cancel") { dismiss() }
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            progressBar
         }
         .padding(.top, 12)
+    }
+
+    /// A slim, inset progress capsule on its own row — clears the sheet's
+    /// rounded corners and never collides with the Cancel button.
+    private var progressBar: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.quaternary)
+                Capsule()
+                    .fill(accent.gradient)
+                    .frame(width: max(6, geo.size.width * progressFraction))
+            }
+        }
+        .frame(height: 5)
+        .animation(.snappy(duration: 0.3), value: progressFraction)
+        .accessibilityLabel("Step \(index + 1) of \(steps.count)")
+    }
+
+    private var progressFraction: Double {
+        guard steps.count > 1 else { return 1 }
+        return Double(index + 1) / Double(steps.count)
     }
 
     @ViewBuilder
@@ -173,9 +205,9 @@ struct AddTripFlowView: View {
 
     @ViewBuilder
     private var footer: some View {
-        // The itinerary step has its own action buttons; every other step gets
-        // a standard Continue / Save.
-        if step != .itinerary {
+        // The itinerary and flight-lookup steps have their own action buttons;
+        // every other step gets a standard Continue / Save.
+        if step != .itinerary && step != .flightLookup {
             Button {
                 isReview ? save() : next()
             } label: {
@@ -207,6 +239,7 @@ struct AddTripFlowView: View {
     private var headline: String {
         switch step {
         case .type:        return legs.isEmpty ? "Plan a new trip" : "Add another leg"
+        case .flightLookup: return "What's your flight?"
         case .origin:      return "Where are you starting?"
         case .destination: return "And where to?"
         case .when:        return "When do you leave?"
@@ -223,6 +256,7 @@ struct AddTripFlowView: View {
     private var subhead: String? {
         switch step {
         case .type:        return legs.isEmpty ? "Start with your first leg — how are you travelling?" : "How are you travelling this leg?"
+        case .flightLookup: return "Enter your flight number and date — we'll fill in the rest."
         case .origin:      return legs.isEmpty ? "Search an airport, station, city, or address." : "Starts where your last leg ended — change it if you like."
         case .destination: return "Where this leg ends."
         case .when:        return "Pick your departure — add an arrival if you know it."
@@ -242,6 +276,7 @@ struct AddTripFlowView: View {
     private var input: some View {
         switch step {
         case .type:        typeInput
+        case .flightLookup: flightLookupInput
         case .origin:      placeInput($draft.origin, icon: "location.circle.fill")
         case .destination: placeInput($draft.destination, icon: "mappin.circle.fill")
         case .when:        whenInput
@@ -408,6 +443,113 @@ struct AddTripFlowView: View {
         }
     }
 
+    // MARK: Flight lookup step
+
+    @ViewBuilder
+    private var flightLookupInput: some View {
+        VStack(spacing: 16) {
+            bigField($lookupNumber, placeholder: "Flight number (e.g. AA 100)", caps: true)
+
+            DatePicker("Travel date", selection: $draft.departureDate, displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .tint(accent)
+                .padding()
+                .glassEffect(.regular, in: .rect(cornerRadius: 22))
+
+            if lookingUp {
+                HStack(spacing: 10) {
+                    ProgressView().tint(accent)
+                    Text("Looking up your flight…").foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding()
+                .glassEffect(.regular, in: .rect(cornerRadius: 18))
+            } else if lookupApplied {
+                lookupResultCard
+                Button { goToItinerary() } label: {
+                    Text("Continue").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
+                }
+                .buttonStyle(.glassProminent).tint(accent)
+            } else {
+                Button { Task { await runWizardLookup() } } label: {
+                    Label("Look up flight", systemImage: "sparkle.magnifyingglass")
+                        .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
+                }
+                .buttonStyle(.glassProminent).tint(accent)
+                .disabled(lookupNumber.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                if let msg = lookupMessage {
+                    Text(msg).font(.callout).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            Button { next() } label: {
+                Text(lookupApplied ? "Edit details manually" : "Enter details manually")
+                    .font(.subheadline.weight(.medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .padding(.top, 4)
+        }
+    }
+
+    private var lookupResultCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Flight found", systemImage: "checkmark.seal.fill")
+                .font(.headline).foregroundStyle(.green)
+            if let o = draft.origin, let d = draft.destination {
+                Text("\(o.displayName) → \(d.displayName)")
+                    .font(.subheadline.weight(.semibold))
+            }
+            if !draft.operatorName.isEmpty {
+                Text([draft.operatorName, draft.vehicleNumber].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text("Departs \(Format.dateTime(draft.departureDate))")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(accent.opacity(0.14), in: .rect(cornerRadius: 18))
+    }
+
+    private func runWizardLookup() async {
+        lookingUp = true
+        lookupMessage = nil
+        let outcome = await FlightAutofill.run(flightNumber: lookupNumber, date: draft.departureDate, tracker: tracker)
+        lookingUp = false
+
+        guard case .filled(let f) = outcome else {
+            lookupMessage = outcome.message
+            return
+        }
+        if let o = f.origin { draft.origin = o }
+        if let d = f.destination { draft.destination = d }
+        if !f.airline.isEmpty { draft.operatorName = f.airline }
+        draft.vehicleNumber = f.flightNumber.isEmpty ? lookupNumber : f.flightNumber
+        if let dep = f.departure { draft.departureDate = dep }
+        if let arr = f.arrival { draft.hasArrival = true; draft.arrivalDate = arr }
+
+        if draft.origin != nil, draft.destination != nil {
+            lookupApplied = true
+        } else {
+            lookupMessage = "Found the flight, but couldn't place the airports on the map. Continue manually to set them."
+        }
+    }
+
+    private func goToItinerary() {
+        goingForward = true
+        withAnimation(.snappy) { index = steps.count - 1 }   // itinerary is the last step
+    }
+
+    private func resetLookupState() {
+        lookupNumber = ""
+        lookupMessage = nil
+        lookupApplied = false
+        lookingUp = false
+    }
+
     // MARK: Itinerary step
 
     private var itineraryInput: some View {
@@ -550,6 +692,7 @@ struct AddTripFlowView: View {
         nextLeg.departureDate = draft.arrivalDate
         draft = nextLeg
         driveTime = nil
+        resetLookupState()
         goingForward = true
         withAnimation(.snappy) { index = 0 }
     }
@@ -633,7 +776,10 @@ private struct PlanBackground: View {
 
 #if DEBUG
 #Preview {
-    AddTripFlowView()
+    let usage = APIUsageTracker()
+    return AddTripFlowView()
         .modelContainer(PreviewData.container)
+        .environment(usage)
+        .environment(FlightTracker(usage: usage))
 }
 #endif

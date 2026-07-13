@@ -56,11 +56,18 @@ struct LegEditorView: View {
     let onSave: (LegDraft) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(FlightTracker.self) private var tracker
+
+    @State private var lookupNumber = ""
+    @State private var lookingUp = false
+    @State private var lookupMessage: String?
+    @State private var lookupSucceeded = false
 
     init(titleText: String, draft: LegDraft, onSave: @escaping (LegDraft) -> Void) {
         self.titleText = titleText
         self._draft = State(initialValue: draft)
         self.onSave = onSave
+        self._lookupNumber = State(initialValue: draft.vehicleNumber)
     }
 
     var body: some View {
@@ -74,6 +81,8 @@ struct LegEditorView: View {
                     }
                     .pickerStyle(.segmented)
                 }
+
+                if draft.type == .flight { flightLookupSection }
 
                 Section("Route") {
                     LocationSearchField(title: "From", systemImage: "circle.circle", place: $draft.origin)
@@ -102,6 +111,7 @@ struct LegEditorView: View {
             }
             .navigationTitle(titleText)
             .navigationBarTitleDisplayMode(.inline)
+            .disabled(lookingUp)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -111,9 +121,60 @@ struct LegEditorView: View {
                         onSave(draft)
                         dismiss()
                     }
-                    .disabled(!draft.isComplete)
+                    .disabled(!draft.isComplete || lookingUp)
                 }
             }
+        }
+    }
+
+    // MARK: Flight auto-fill
+
+    private var flightLookupSection: some View {
+        Section {
+            HStack {
+                TextField("Flight number (e.g. AA 100)", text: $lookupNumber)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .onSubmit { Task { await runLookup() } }
+                if lookingUp {
+                    ProgressView()
+                } else {
+                    Button("Look up") { Task { await runLookup() } }
+                        .buttonStyle(.borderless)
+                        .disabled(lookupNumber.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            DatePicker("Travel date", selection: $draft.departureDate, displayedComponents: .date)
+            if let msg = lookupMessage {
+                Label(msg, systemImage: lookupSucceeded ? "checkmark.circle.fill" : "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(lookupSucceeded ? .green : .secondary)
+            }
+        } header: {
+            Text("Auto-fill")
+        } footer: {
+            Text("Enter a flight number and date to fill in the route, airline, and times automatically. Uses one API lookup.")
+        }
+    }
+
+    private func runLookup() async {
+        lookingUp = true
+        lookupMessage = nil
+        lookupSucceeded = false
+        let outcome = await FlightAutofill.run(flightNumber: lookupNumber, date: draft.departureDate, tracker: tracker)
+        lookingUp = false
+
+        if case .filled(let f) = outcome {
+            if let o = f.origin { draft.origin = o }
+            if let d = f.destination { draft.destination = d }
+            if !f.airline.isEmpty { draft.operatorName = f.airline }
+            if !f.flightNumber.isEmpty { draft.vehicleNumber = f.flightNumber }
+            if let dep = f.departure { draft.departureDate = dep }
+            if let arr = f.arrival { draft.hasArrival = true; draft.arrivalDate = arr }
+            lookupSucceeded = true
+            lookupMessage = "Filled: \(f.routeSummary)"
+        } else {
+            lookupMessage = outcome.message
         }
     }
 }

@@ -204,7 +204,10 @@ struct AddEditTripView: View {
 
 #if DEBUG
 #Preview {
-    AddEditTripView(trip: .sampleMultiModal)
+    let usage = APIUsageTracker()
+    return AddEditTripView(trip: .sampleMultiModal)
         .modelContainer(PreviewData.container)
+        .environment(usage)
+        .environment(FlightTracker(usage: usage))
 }
 #endif

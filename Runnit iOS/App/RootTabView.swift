@@ -58,7 +58,10 @@ struct RootTabView: View {
 
 #if DEBUG
 #Preview {
-    RootTabView()
+    let usage = APIUsageTracker()
+    return RootTabView()
         .modelContainer(PreviewData.container)
+        .environment(usage)
+        .environment(FlightTracker(usage: usage))
 }
 #endif
