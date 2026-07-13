@@ -17,69 +17,71 @@ extension Trip {
 #if DEBUG
 extension Trip {
     static var sampleFlight: Trip {
-        Trip(
-            type: .flight,
-            title: "",
-            origin: .sfo,
-            destination: .jfk,
-            departureDate: daysFromNow(4),
-            arrivalDate: daysFromNow(4).addingTimeInterval(6 * 3600),
-            operatorName: "United",
-            vehicleNumber: "UA 523",
-            boardingPoint: "Gate B12",
-            seat: "14A",
-            confirmation: "ABC123"
-        )
+        .make(segments: [
+            TripSegment(
+                type: .flight, origin: .sfo, destination: .jfk,
+                departureDate: daysFromNow(4),
+                arrivalDate: daysFromNow(4).addingTimeInterval(6 * 3600),
+                operatorName: "United", vehicleNumber: "UA 523",
+                boardingPoint: "Gate B12", seat: "14A", confirmation: "ABC123"
+            )
+        ])
     }
 
     static var sampleTrain: Trip {
-        Trip(
-            type: .train,
-            origin: .lhr,
-            destination: .paris,
-            departureDate: daysFromNow(12),
-            arrivalDate: daysFromNow(12).addingTimeInterval(2.5 * 3600),
-            operatorName: "Eurostar",
-            vehicleNumber: "ES 9024",
-            boardingPoint: "Platform 5",
-            seat: "Coach 8, 32"
-        )
+        .make(segments: [
+            TripSegment(
+                type: .train, origin: .lhr, destination: .paris,
+                departureDate: daysFromNow(12),
+                arrivalDate: daysFromNow(12).addingTimeInterval(2.5 * 3600),
+                operatorName: "Eurostar", vehicleNumber: "ES 9024",
+                boardingPoint: "Platform 5", seat: "Coach 8, 32"
+            )
+        ])
     }
 
     static var sampleRoadTrip: Trip {
-        Trip(
-            type: .roadTrip,
-            title: "Coast Weekend",
-            origin: .sfo,
-            destination: .bigSur,
-            departureDate: daysFromNow(20)
-        )
+        .make(title: "Coast Weekend", segments: [
+            TripSegment(type: .roadTrip, origin: .sfo, destination: .bigSur,
+                        departureDate: daysFromNow(20))
+        ])
+    }
+
+    /// A multi-modal trip: fly, then take the train, then drive.
+    static var sampleMultiModal: Trip {
+        let dep = daysFromNow(28)
+        return .make(title: "Euro Loop", segments: [
+            TripSegment(type: .flight, origin: .sfo, destination: .lhr,
+                        departureDate: dep,
+                        arrivalDate: dep.addingTimeInterval(10 * 3600),
+                        operatorName: "British Airways", vehicleNumber: "BA 286"),
+            TripSegment(type: .train, origin: .lhr, destination: .paris,
+                        departureDate: dep.addingTimeInterval(24 * 3600),
+                        arrivalDate: dep.addingTimeInterval(24 * 3600 + 2.5 * 3600),
+                        operatorName: "Eurostar", vehicleNumber: "ES 9024"),
+            TripSegment(type: .roadTrip, origin: .paris, destination: .bigSur,
+                        departureDate: dep.addingTimeInterval(4 * 24 * 3600))
+        ])
     }
 
     static var samplePastFlight: Trip {
-        Trip(
-            type: .flight,
-            origin: .jfk,
-            destination: .lhr,
-            departureDate: daysFromNow(-45),
-            arrivalDate: daysFromNow(-45).addingTimeInterval(7 * 3600),
-            operatorName: "British Airways",
-            vehicleNumber: "BA 178"
-        )
+        .make(segments: [
+            TripSegment(type: .flight, origin: .jfk, destination: .lhr,
+                        departureDate: daysFromNow(-45),
+                        arrivalDate: daysFromNow(-45).addingTimeInterval(7 * 3600),
+                        operatorName: "British Airways", vehicleNumber: "BA 178")
+        ])
     }
 
     static var samplePastRoadTrip: Trip {
-        Trip(
-            type: .roadTrip,
-            title: "Yosemite Escape",
-            origin: .sfo,
-            destination: .yosemite,
-            departureDate: daysFromNow(-120)
-        )
+        .make(title: "Yosemite Escape", segments: [
+            TripSegment(type: .roadTrip, origin: .sfo, destination: .yosemite,
+                        departureDate: daysFromNow(-120))
+        ])
     }
 
     static var allSamples: [Trip] {
-        [sampleFlight, sampleTrain, sampleRoadTrip, samplePastFlight, samplePastRoadTrip]
+        [sampleFlight, sampleTrain, sampleRoadTrip, sampleMultiModal, samplePastFlight, samplePastRoadTrip]
     }
 }
 
@@ -88,7 +90,7 @@ extension Trip {
 enum PreviewData {
     static let container: ModelContainer = {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
-        let container = try! ModelContainer(for: Trip.self, configurations: config)
+        let container = try! ModelContainer(for: Trip.self, TripSegment.self, configurations: config)
         for trip in Trip.allSamples {
             container.mainContext.insert(trip)
         }

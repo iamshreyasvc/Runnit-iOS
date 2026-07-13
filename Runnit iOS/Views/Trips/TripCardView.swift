@@ -2,7 +2,8 @@
 //  TripCardView.swift
 //  Runnit iOS
 //
-//  Liquid Glass card summarizing one trip in the list.
+//  Liquid Glass card summarizing one trip in the list. Multi-modal trips show a
+//  mode-icon chain, the overall route, and a leg summary.
 //
 
 import SwiftUI
@@ -13,20 +14,17 @@ struct TripCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
-                Image(systemName: trip.type.symbol)
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .frame(width: 36, height: 36)
-                    .background(trip.type.gradient, in: .circle)
+                modeChain
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(trip.type.label)
+                    Text(headline)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(trip.type.accent)
-                    if let number = trip.vehicleNumber, !number.isEmpty {
-                        Text(number)
+                    if let sub = subheadline {
+                        Text(sub)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                 }
 
@@ -38,7 +36,7 @@ struct TripCardView: View {
             routeRow
 
             HStack {
-                Label(Format.date(trip.departureDate), systemImage: "calendar")
+                Label(Format.date(trip.startDate), systemImage: "calendar")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -50,13 +48,53 @@ struct TripCardView: View {
         .glassCard(tint: trip.type.accent.opacity(0.28))
     }
 
+    // MARK: Header
+
+    /// A single mode circle for simple trips, or a chain of small mode icons
+    /// (e.g. ✈ → 🚆 → 🚗) for multi-modal trips.
+    @ViewBuilder
+    private var modeChain: some View {
+        if trip.isMultiModal {
+            HStack(spacing: -6) {
+                ForEach(Array(trip.modeSequence.enumerated()), id: \.offset) { _, mode in
+                    Image(systemName: mode.symbol)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 26, height: 26)
+                        .background(mode.gradient, in: .circle)
+                        .overlay(Circle().strokeBorder(.background, lineWidth: 1.5))
+                }
+            }
+        } else {
+            Image(systemName: trip.type.symbol)
+                .font(.headline)
+                .foregroundStyle(.white)
+                .frame(width: 36, height: 36)
+                .background(trip.type.gradient, in: .circle)
+        }
+    }
+
+    private var headline: String {
+        trip.isMultiModal ? "\(trip.legCount) legs" : trip.type.label
+    }
+
+    private var subheadline: String? {
+        if trip.isMultiModal {
+            return trip.modeSequence.map(\.label).joined(separator: " · ")
+        }
+        if let number = trip.vehicleNumber, !number.isEmpty {
+            return number
+        }
+        return nil
+    }
+
     private var routeRow: some View {
         HStack(alignment: .center, spacing: 8) {
-            endpoint(trip.origin.displayName)
+            endpoint(trip.startPlace.displayName)
             Image(systemName: "arrow.right")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
-            endpoint(trip.destination.displayName)
+            endpoint(trip.endPlace.displayName)
             Spacer(minLength: 0)
         }
     }
@@ -69,7 +107,7 @@ struct TripCardView: View {
     }
 
     private var statusPill: some View {
-        Text(Format.relative(trip.departureDate))
+        Text(Format.relative(trip.startDate))
             .font(.caption2.weight(.semibold))
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
@@ -86,6 +124,7 @@ struct TripCardView: View {
     ScrollView {
         VStack(spacing: 16) {
             TripCardView(trip: .sampleFlight)
+            TripCardView(trip: .sampleMultiModal)
             TripCardView(trip: .sampleRoadTrip)
         }
         .padding()

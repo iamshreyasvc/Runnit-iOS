@@ -2,17 +2,20 @@
 //  AddTripFlowView.swift
 //  Runnit iOS
 //
-//  A conversational, one-question-at-a-time flow for adding a trip. Replaces
-//  the single static form: each screen asks one friendly question, adapts to
-//  the chosen mode, and ends with a review before saving.
+//  A conversational, one-question-at-a-time flow for adding a trip. Each screen
+//  asks one friendly question and adapts to the chosen mode. Trips can be
+//  multi-modal: after each leg, an itinerary step lets you add another leg
+//  (chained from the previous destination) or finish and save.
 //
 
 import SwiftUI
 import SwiftData
 
-// MARK: - Draft
+// MARK: - Drafts
 
-private struct TripDraft {
+/// One leg being entered in the wizard.
+private struct SegmentDraft: Identifiable {
+    let id = UUID()
     var type: TripType = .flight
     var origin: Place?
     var destination: Place?
@@ -24,12 +27,13 @@ private struct TripDraft {
     var boardingPoint = ""
     var seat = ""
     var confirmation = ""
-    var title = ""
-    var notes = ""
 }
 
 private enum WizardStep: Hashable {
-    case type, origin, destination, when, carrier, number, details, name, notes, review
+    // Per-leg questions
+    case type, origin, destination, when, carrier, number, details, itinerary
+    // Trip-level finish
+    case name, notes, review
 }
 
 // MARK: - Flow
@@ -38,10 +42,13 @@ struct AddTripFlowView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
 
-    @State private var draft: TripDraft = {
+    /// Legs already committed, in order.
+    @State private var legs: [SegmentDraft] = []
+    /// The leg currently being entered (not yet committed).
+    @State private var draft: SegmentDraft = {
         #if DEBUG
         if ProcessInfo.processInfo.environment["ADD_DEMO_ROADTRIP"] == "1" {
-            var d = TripDraft()
+            var d = SegmentDraft()
             d.type = .roadTrip
             d.origin = Place(name: "San Francisco", subtitle: "California",
                              latitude: 37.7749, longitude: -122.4194,
@@ -52,8 +59,14 @@ struct AddTripFlowView: View {
             return d
         }
         #endif
-        return TripDraft()
+        return SegmentDraft()
     }()
+
+    @State private var title = ""
+    @State private var notes = ""
+
+    /// false → building legs; true → entering trip-level details (name/notes/review).
+    @State private var finishing = false
     @State private var index: Int = {
         #if DEBUG
         if let raw = ProcessInfo.processInfo.environment["ADD_STEP"], let n = Int(raw) { return n }
@@ -68,19 +81,28 @@ struct AddTripFlowView: View {
     @AppStorage(PrefKey.appearance) private var appearanceRaw = AppAppearance.dark.rawValue
 
     private var steps: [WizardStep] {
+        if finishing {
+            return [.name, .notes, .review]
+        }
         var s: [WizardStep] = [.type, .origin, .destination, .when]
-        s += draft.type.isScheduledTransit ? [.carrier, .number, .details] : [.name]
-        s += [.notes, .review]
+        s += draft.type.isScheduledTransit ? [.carrier, .number, .details] : []
+        s += [.itinerary]
         return s
     }
 
     private var step: WizardStep { steps[min(index, steps.count - 1)] }
-    private var accent: Color { draft.type.accent }
-    private var isLast: Bool { step == .review }
+    /// A single, consistent accent for the whole modal (matches the app tint).
+    /// Mode colors appear only in the small mode icons, keeping this clean.
+    private let accent: Color = .cyan
+    private var isReview: Bool { step == .review }
+    private var canGoBack: Bool { index > 0 || finishing || !legs.isEmpty }
+
+    /// The full itinerary so far, including the in-progress leg.
+    private var itinerary: [SegmentDraft] { legs + [draft] }
 
     var body: some View {
         ZStack {
-            AppBackground(accent: accent, secondary: .purple)
+            PlanBackground()
 
             VStack(spacing: 0) {
                 topBar
@@ -101,7 +123,7 @@ struct AddTripFlowView: View {
 
     private var topBar: some View {
         HStack(spacing: 12) {
-            if index > 0 {
+            if canGoBack {
                 Button { back() } label: {
                     Image(systemName: "chevron.left")
                         .font(.headline)
@@ -142,39 +164,56 @@ struct AddTripFlowView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 24)
         }
-        .id(step)
+        .id(finishing ? "finish-\(step)" : "leg\(legs.count)-\(step)")
         .transition(.asymmetric(
             insertion: .move(edge: goingForward ? .trailing : .leading).combined(with: .opacity),
             removal: .move(edge: goingForward ? .leading : .trailing).combined(with: .opacity)
         ))
     }
 
+    @ViewBuilder
     private var footer: some View {
-        Button {
-            isLast ? save() : next()
-        } label: {
-            Text(isLast ? "Save trip" : "Continue")
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
+        // The itinerary step has its own action buttons; every other step gets
+        // a standard Continue / Save.
+        if step != .itinerary {
+            Button {
+                isReview ? save() : next()
+            } label: {
+                Text(isReview ? "Save trip" : "Continue")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.glassProminent)
+            .tint(accent)
+            .disabled(!canAdvance || isSaving)
+            .padding(.bottom, 8)
         }
-        .buttonStyle(.glassProminent)
-        .tint(accent)
-        .disabled(!canAdvance || isSaving)
-        .padding(.bottom, 8)
     }
 
     // MARK: Copy
 
+    private var legOrdinal: String {
+        let n = legs.count + 1
+        switch n {
+        case 1: return "first"
+        case 2: return "second"
+        case 3: return "third"
+        case 4: return "fourth"
+        default: return "\(n)th"
+        }
+    }
+
     private var headline: String {
         switch step {
-        case .type:        return "Let's plan a trip"
+        case .type:        return legs.isEmpty ? "Plan a new trip" : "Add another leg"
         case .origin:      return "Where are you starting?"
         case .destination: return "And where to?"
         case .when:        return "When do you leave?"
         case .carrier:     return draft.type == .flight ? "Which airline?" : "Which operator?"
         case .number:      return draft.type == .flight ? "Flight number?" : "Train number?"
         case .details:     return "Any details to add?"
+        case .itinerary:   return "Your itinerary"
         case .name:        return "Give it a name?"
         case .notes:       return "Anything to remember?"
         case .review:      return "Look good?"
@@ -183,13 +222,14 @@ struct AddTripFlowView: View {
 
     private var subhead: String? {
         switch step {
-        case .type:        return "What kind of journey is this?"
-        case .origin:      return "Search an airport, station, city, or address."
-        case .destination: return "Your final stop."
+        case .type:        return legs.isEmpty ? "Start with your first leg — how are you travelling?" : "How are you travelling this leg?"
+        case .origin:      return legs.isEmpty ? "Search an airport, station, city, or address." : "Starts where your last leg ended — change it if you like."
+        case .destination: return "Where this leg ends."
         case .when:        return "Pick your departure — add an arrival if you know it."
         case .carrier:     return "Optional, but nice to have."
         case .number:      return "So we can find it later. Optional."
         case .details:     return draft.type == .flight ? "Gate, seat, confirmation…" : "Platform, seat, confirmation…"
+        case .itinerary:   return "Add another leg, or continue to finish."
         case .name:        return "Optional — a fun title for this trip."
         case .notes:       return "Optional notes, packing reminders, anything."
         case .review:      return nil
@@ -208,39 +248,51 @@ struct AddTripFlowView: View {
         case .carrier:     bigField($draft.operatorName, placeholder: draft.type == .flight ? "e.g. United" : "e.g. Amtrak")
         case .number:      bigField($draft.vehicleNumber, placeholder: draft.type == .flight ? "e.g. UA 523" : "e.g. NE 178", caps: true)
         case .details:     detailsInput
-        case .name:        bigField($draft.title, placeholder: "e.g. Summer Road Trip")
+        case .itinerary:   itineraryInput
+        case .name:        bigField($title, placeholder: "e.g. Summer Road Trip")
         case .notes:       notesInput
         case .review:      reviewInput
         }
     }
 
     private var typeInput: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
+        VStack(spacing: 12) {
             ForEach(TripType.allCases) { type in
                 Button {
                     draft.type = type
                     next()
                 } label: {
-                    VStack(spacing: 12) {
-                        Image(systemName: type.symbol)
-                            .font(.system(size: 34, weight: .semibold))
-                            .foregroundStyle(.white)
-                        Text(type.label)
-                            .font(.headline)
-                            .foregroundStyle(.white)
+                    HStack(spacing: 16) {
+                        modeIcon(type, size: 52)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(type.label).font(.headline)
+                            Text(type.blurb).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: draft.type == type ? "checkmark.circle.fill" : "chevron.right")
+                            .font(draft.type == type ? .title3 : .subheadline.weight(.semibold))
+                            .foregroundStyle(draft.type == type ? AnyShapeStyle(accent) : AnyShapeStyle(.tertiary))
                     }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 130)
-                    .background(type.gradient, in: .rect(cornerRadius: 24))
+                    .padding(14)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 20))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 24)
-                            .strokeBorder(.white.opacity(draft.type == type ? 0.9 : 0), lineWidth: 3)
+                        RoundedRectangle(cornerRadius: 20)
+                            .strokeBorder(accent.opacity(draft.type == type ? 0.7 : 0), lineWidth: 1.5)
                     }
-                    .shadow(color: type.accent.opacity(0.5), radius: 14, y: 6)
                 }
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    /// A mode's SF Symbol in a soft, mode-tinted rounded square — the one spot
+    /// where mode color appears in this otherwise-neutral flow.
+    private func modeIcon(_ type: TripType, size: CGFloat) -> some View {
+        Image(systemName: type.symbol)
+            .font(.system(size: size * 0.42, weight: .semibold))
+            .foregroundStyle(type.accent)
+            .frame(width: size, height: size)
+            .background(type.accent.opacity(0.16), in: .rect(cornerRadius: size * 0.28))
     }
 
     private func placeInput(_ binding: Binding<Place?>, icon: String) -> some View {
@@ -356,8 +408,63 @@ struct AddTripFlowView: View {
         }
     }
 
+    // MARK: Itinerary step
+
+    private var itineraryInput: some View {
+        VStack(spacing: 16) {
+            VStack(spacing: 10) {
+                ForEach(Array(itinerary.enumerated()), id: \.element.id) { idx, leg in
+                    legRow(index: idx, leg: leg)
+                }
+            }
+            .padding()
+            .glassEffect(.regular, in: .rect(cornerRadius: 22))
+
+            Button {
+                addAnotherLeg()
+            } label: {
+                Label("Add another leg", systemImage: "plus.circle.fill")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.glass)
+            .tint(accent)
+
+            Button {
+                finishLegs()
+            } label: {
+                Text(itinerary.count > 1 ? "Continue" : "That's the whole trip")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.glassProminent)
+            .tint(accent)
+        }
+    }
+
+    private func legRow(index: Int, leg: SegmentDraft) -> some View {
+        HStack(spacing: 14) {
+            modeIcon(leg.type, size: 40)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(leg.type.label) · \(Format.date(leg.departureDate))")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text("\(leg.origin?.displayName ?? "—") → \(leg.destination?.displayName ?? "—")")
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            Spacer()
+            Text("Leg \(index + 1)")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
     private var notesInput: some View {
-        TextField("Notes", text: $draft.notes, axis: .vertical)
+        TextField("Notes", text: $notes, axis: .vertical)
             .lineLimit(4...8)
             .padding()
             .glassEffect(.regular, in: .rect(cornerRadius: 20))
@@ -373,18 +480,13 @@ struct AddTripFlowView: View {
 
     private var reviewInput: some View {
         VStack(spacing: 14) {
-            reviewRow(icon: draft.type.symbol, title: draft.type.label, tint: accent)
-            reviewRow(icon: "location.circle.fill", title: draft.origin?.name ?? "—")
-            reviewRow(icon: "mappin.circle.fill", title: draft.destination?.name ?? "—")
-            reviewRow(icon: "calendar", title: Format.dateTime(draft.departureDate))
-            if draft.hasArrival {
-                reviewRow(icon: "calendar.badge.clock", title: Format.dateTime(draft.arrivalDate))
+            ForEach(Array(legs.enumerated()), id: \.element.id) { idx, leg in
+                legRow(index: idx, leg: leg)
+                if idx < legs.count - 1 { Divider() }
             }
-            if draft.type.isScheduledTransit, !draft.vehicleNumber.isEmpty {
-                reviewRow(icon: "number", title: draft.vehicleNumber)
-            }
-            if !draft.title.isEmpty {
-                reviewRow(icon: "textformat", title: draft.title)
+            if !title.isEmpty {
+                Divider()
+                reviewRow(icon: "textformat", title: title)
             }
         }
         .padding()
@@ -416,34 +518,83 @@ struct AddTripFlowView: View {
     }
 
     private func back() {
-        guard index > 0 else { return }
         goingForward = false
-        withAnimation(.snappy) { index -= 1 }
+        if index > 0 {
+            withAnimation(.snappy) { index -= 1 }
+            return
+        }
+        // index == 0: step back across phase / leg boundaries.
+        if finishing {
+            finishing = false
+            let restored = legs.popLast()
+            withAnimation(.snappy) {
+                if let restored { draft = restored }
+                index = max(steps.count - 1, 0)   // itinerary of the last leg
+            }
+            return
+        }
+        if let restored = legs.popLast() {
+            withAnimation(.snappy) {
+                draft = restored
+                index = max(steps.count - 1, 0)   // that leg's itinerary
+            }
+        }
     }
 
-    private func save() {
-        guard var origin = draft.origin, var destination = draft.destination else { return }
-        isSaving = true
-        let d = draft
-        Task {
-            if origin.isoCountryCode == nil { origin = await origin.reverseGeocoded() }
-            if destination.isoCountryCode == nil { destination = await destination.reverseGeocoded() }
+    /// Commit the current leg, reset the draft (chained from its destination),
+    /// and loop back to the mode question for a new leg.
+    private func addAnotherLeg() {
+        legs.append(draft)
+        var nextLeg = SegmentDraft()
+        nextLeg.origin = draft.destination
+        nextLeg.departureDate = draft.arrivalDate
+        draft = nextLeg
+        driveTime = nil
+        goingForward = true
+        withAnimation(.snappy) { index = 0 }
+    }
 
-            let trip = Trip(
-                type: d.type,
-                title: d.title.trimmingCharacters(in: .whitespaces),
-                origin: origin,
-                destination: destination,
-                departureDate: d.departureDate,
-                arrivalDate: d.hasArrival ? d.arrivalDate : nil,
-                operatorName: nilIfEmpty(d.operatorName),
-                vehicleNumber: nilIfEmpty(d.vehicleNumber),
-                boardingPoint: nilIfEmpty(d.boardingPoint),
-                seat: nilIfEmpty(d.seat),
-                confirmation: nilIfEmpty(d.confirmation),
-                notes: nilIfEmpty(d.notes)
-            )
+    /// Commit the current leg and move to the trip-level finishing steps.
+    private func finishLegs() {
+        legs.append(draft)
+        finishing = true
+        goingForward = true
+        withAnimation(.snappy) { index = 0 }
+    }
+
+    // MARK: Save
+
+    private func save() {
+        guard !legs.isEmpty else { return }
+        isSaving = true
+        let capturedLegs = legs
+        let tripTitle = title.trimmingCharacters(in: .whitespaces)
+        let tripNotes = nilIfEmpty(notes)
+        Task {
+            var segments: [TripSegment] = []
+            for (i, leg) in capturedLegs.enumerated() {
+                guard var origin = leg.origin, var destination = leg.destination else { continue }
+                if origin.isoCountryCode == nil { origin = await origin.reverseGeocoded() }
+                if destination.isoCountryCode == nil { destination = await destination.reverseGeocoded() }
+                segments.append(TripSegment(
+                    type: leg.type,
+                    origin: origin,
+                    destination: destination,
+                    departureDate: leg.departureDate,
+                    arrivalDate: leg.hasArrival ? leg.arrivalDate : nil,
+                    operatorName: nilIfEmpty(leg.operatorName),
+                    vehicleNumber: nilIfEmpty(leg.vehicleNumber),
+                    boardingPoint: nilIfEmpty(leg.boardingPoint),
+                    seat: nilIfEmpty(leg.seat),
+                    confirmation: nilIfEmpty(leg.confirmation),
+                    order: i
+                ))
+            }
+            guard !segments.isEmpty else { isSaving = false; return }
+
+            let trip = Trip.make(title: tripTitle, notes: tripNotes, segments: segments)
             context.insert(trip)
+            for segment in segments { context.insert(segment) }
             try? context.save()
             isSaving = false
             dismiss()
@@ -453,6 +604,30 @@ struct AddTripFlowView: View {
     private func nilIfEmpty(_ s: String) -> String? {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         return t.isEmpty ? nil : t
+    }
+}
+
+/// A calm, near-neutral background for the add-trip flow: a soft base gradient
+/// with a single faint accent glow. Intentionally quieter than `AppBackground`.
+private struct PlanBackground: View {
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let dark = scheme == .dark
+        ZStack {
+            LinearGradient(
+                colors: dark
+                    ? [Color(red: 0.08, green: 0.09, blue: 0.11), Color(red: 0.03, green: 0.03, blue: 0.05)]
+                    : [Color(red: 0.98, green: 0.98, blue: 1.00), Color(red: 0.92, green: 0.93, blue: 0.96)],
+                startPoint: .top, endPoint: .bottom
+            )
+            Circle()
+                .fill(Color.cyan.opacity(dark ? 0.12 : 0.08))
+                .frame(width: 360, height: 360)
+                .blur(radius: 150)
+                .offset(x: 150, y: -320)
+        }
+        .ignoresSafeArea()
     }
 }
 

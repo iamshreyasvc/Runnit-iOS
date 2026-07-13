@@ -26,6 +26,16 @@ extension TripType {
             endPoint: .bottomTrailing
         )
     }
+
+    /// A short descriptor shown when choosing a mode for a leg.
+    var blurb: String {
+        switch self {
+        case .flight:   return "Airport to airport"
+        case .train:    return "Station to station"
+        case .roadTrip: return "Drive it yourself"
+        case .other:    return "Ferry, bus, or anything else"
+        }
+    }
 }
 
 enum Format {

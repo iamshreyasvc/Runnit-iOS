@@ -68,13 +68,25 @@ final class Trip {
     private var typeRaw: String = TripType.flight.rawValue
     var title: String = ""
 
+    /// The ordered legs of this trip. Simple point-to-point trips have exactly
+    /// one segment; multi-modal trips chain several (e.g. flight → train → drive).
+    @Relationship(deleteRule: .cascade, inverse: \TripSegment.trip)
+    var segments: [TripSegment] = []
+
+    // MARK: Denormalized "overall" summary
+    //
+    // These flat fields mirror the whole journey — first leg's origin/departure,
+    // last leg's destination/arrival, and the primary (first) leg's mode and
+    // transit details. They exist so the SwiftData schema change stays additive
+    // (lightweight migration) and so `@Query` can sort by `departureDate`. Keep
+    // them in sync with `segments` via `refreshSummary()` on every write.
     var origin: Place = Place(name: "", latitude: 0, longitude: 0)
     var destination: Place = Place(name: "", latitude: 0, longitude: 0)
 
     var departureDate: Date = Date()
     var arrivalDate: Date?
 
-    // Scheduled-transit details (flight / train)
+    // Scheduled-transit details of the primary (first) leg.
     var operatorName: String?
     var vehicleNumber: String?
     var boardingPoint: String?
@@ -115,27 +127,106 @@ final class Trip {
         self.createdAt = Date()
     }
 
+    /// Primary (first-leg) mode, used for tinting and the overall summary.
     var type: TripType {
         get { TripType(rawValue: typeRaw) ?? .other }
         set { typeRaw = newValue.rawValue }
     }
 
-    /// The moment the trip is "done" — arrival if set, otherwise departure.
-    var endDate: Date { arrivalDate ?? departureDate }
+    // MARK: Segment-derived accessors
+
+    /// Legs in travel order.
+    var orderedSegments: [TripSegment] {
+        segments.sorted { $0.order < $1.order }
+    }
+
+    /// Legs for display. Falls back to a single synthesized leg built from the
+    /// legacy flat fields when a trip has no segments yet (e.g. a brand-new or
+    /// not-yet-backfilled trip), so every screen renders consistently.
+    var displaySegments: [TripSegment] {
+        let segs = orderedSegments
+        if !segs.isEmpty { return segs }
+        return [TripSegment(
+            type: type, origin: origin, destination: destination,
+            departureDate: departureDate, arrivalDate: arrivalDate,
+            operatorName: operatorName, vehicleNumber: vehicleNumber,
+            boardingPoint: boardingPoint, seat: seat, confirmation: confirmation,
+            order: 0
+        )]
+    }
+
+    /// True when the trip chains more than one leg.
+    var isMultiModal: Bool { orderedSegments.count > 1 }
+
+    /// Number of legs (at least 1).
+    var legCount: Int { max(orderedSegments.count, 1) }
+
+    /// Modes in travel order — drives the card's mode-icon chain.
+    var modeSequence: [TripType] { displaySegments.map(\.type) }
+
+    /// Overall starting point (first leg's origin).
+    var startPlace: Place { displaySegments.first?.origin ?? origin }
+
+    /// Overall final destination (last leg's destination).
+    var endPlace: Place { displaySegments.last?.destination ?? destination }
+
+    /// Every place the trip touches, in order — for Passport aggregation.
+    var allPlaces: [Place] { displaySegments.flatMap { [$0.origin, $0.destination] } }
+
+    /// When the trip begins (first leg's departure).
+    var startDate: Date { displaySegments.first?.departureDate ?? departureDate }
+
+    /// The moment the trip is "done" — last leg's arrival, else its departure.
+    var endDate: Date { displaySegments.last?.endDate ?? (arrivalDate ?? departureDate) }
 
     var isPast: Bool { endDate < Date() }
     var isUpcoming: Bool { !isPast }
 
-    /// Great-circle distance between origin and destination.
+    /// Total distance across all legs.
     var distanceMeters: Double {
-        origin.clLocation.distance(from: destination.clLocation)
+        let segs = orderedSegments
+        if segs.isEmpty { return origin.clLocation.distance(from: destination.clLocation) }
+        return segs.reduce(0) { $0 + $1.distanceMeters }
     }
 
-    /// A human display title, falling back to "Origin → Destination".
+    /// A human display title, falling back to "Start → End".
     var displayTitle: String {
         if !title.isEmpty { return title }
-        let from = origin.displayName
-        let to = destination.displayName
-        return "\(from) → \(to)"
+        return "\(startPlace.displayName) → \(endPlace.displayName)"
+    }
+
+    /// Build a trip from ordered legs, wiring each segment's `order` and inverse
+    /// relationship and deriving the denormalized summary. The caller inserts the
+    /// returned trip into a ModelContext (its segments are inserted by cascade).
+    static func make(title: String = "", notes: String? = nil, segments: [TripSegment]) -> Trip {
+        let start = segments.first?.origin ?? Place(name: "", latitude: 0, longitude: 0)
+        let end = segments.last?.destination ?? Place(name: "", latitude: 0, longitude: 0)
+        let trip = Trip(origin: start, destination: end)
+        trip.title = title
+        trip.notes = notes
+        for (i, seg) in segments.enumerated() {
+            seg.order = i
+            seg.trip = trip
+        }
+        trip.segments = segments
+        trip.refreshSummary()
+        return trip
+    }
+
+    /// Re-derive the denormalized flat summary fields from the current segments.
+    /// Call after inserting, editing, reordering, or removing legs.
+    func refreshSummary() {
+        let segs = orderedSegments
+        guard let first = segs.first, let last = segs.last else { return }
+        type = first.type
+        origin = first.origin
+        destination = last.destination
+        departureDate = first.departureDate
+        arrivalDate = last.arrivalDate ?? (segs.count > 1 ? last.departureDate : nil)
+        operatorName = first.operatorName
+        vehicleNumber = first.vehicleNumber
+        boardingPoint = first.boardingPoint
+        seat = first.seat
+        confirmation = first.confirmation
     }
 }

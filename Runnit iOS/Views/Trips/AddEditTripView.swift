@@ -2,9 +2,9 @@
 //  AddEditTripView.swift
 //  Runnit iOS
 //
-//  Add or edit a trip. Fields adapt to the selected mode: flights and trains
-//  reveal carrier / number / boarding / seat; road trips keep it to route and
-//  date. Origin & destination use LocationSearchField.
+//  Edit an existing trip (or create one). A trip is a title, optional notes, and
+//  an ordered list of legs. Legs can be added, edited, reordered, and removed;
+//  each leg opens in LegEditorView.
 //
 
 import SwiftUI
@@ -17,64 +17,49 @@ struct AddEditTripView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
 
-    @State private var type: TripType = .flight
     @State private var title: String = ""
-    @State private var origin: Place?
-    @State private var destination: Place?
-    @State private var departureDate: Date = Date()
-    @State private var hasArrival: Bool = false
-    @State private var arrivalDate: Date = Date().addingTimeInterval(3600)
-
-    @State private var operatorName: String = ""
-    @State private var vehicleNumber: String = ""
-    @State private var boardingPoint: String = ""
-    @State private var seat: String = ""
-    @State private var confirmation: String = ""
     @State private var notes: String = ""
+    @State private var legs: [LegDraft] = []
 
+    /// Sheet state: editing an existing leg (by index) or adding a new one.
+    @State private var editingIndex: Int?
+    @State private var showingLegEditor = false
     @State private var isSaving = false
 
     private var isEditing: Bool { trip != nil }
-    private var canSave: Bool { origin != nil && destination != nil }
+    private var canSave: Bool { !legs.isEmpty && legs.allSatisfy(\.isComplete) }
 
     var body: some View {
         NavigationStack {
             Form {
+                Section("Trip name") {
+                    TextField("Optional title", text: $title)
+                }
+
                 Section {
-                    Picker("Type", selection: $type) {
-                        ForEach(TripType.allCases) { type in
-                            Label(type.label, systemImage: type.symbol).tag(type)
+                    ForEach(Array(legs.enumerated()), id: \.element.id) { idx, leg in
+                        Button {
+                            editingIndex = idx
+                            showingLegEditor = true
+                        } label: {
+                            legRow(index: idx, leg: leg)
                         }
+                        .buttonStyle(.plain)
                     }
-                    .pickerStyle(.segmented)
-                }
+                    .onDelete { legs.remove(atOffsets: $0) }
+                    .onMove { legs.move(fromOffsets: $0, toOffset: $1) }
 
-                Section("Route") {
-                    LocationSearchField(title: "From", systemImage: "circle.circle", place: $origin)
-                    LocationSearchField(title: "To", systemImage: "mappin.circle.fill", place: $destination)
-                }
-
-                Section("When") {
-                    DatePicker("Departure", selection: $departureDate)
-                    Toggle("Add arrival time", isOn: $hasArrival.animation())
-                    if hasArrival {
-                        DatePicker("Arrival", selection: $arrivalDate, in: departureDate...)
+                    Button {
+                        editingIndex = nil
+                        showingLegEditor = true
+                    } label: {
+                        Label("Add leg", systemImage: "plus.circle.fill")
                     }
-                }
-
-                if type.isScheduledTransit {
-                    Section(type == .flight ? "Flight details" : "Train details") {
-                        TextField(type == .flight ? "Airline" : "Operator", text: $operatorName)
-                        TextField(type.numberLabel, text: $vehicleNumber)
-                            .textInputAutocapitalization(.characters)
-                        TextField(type.boardingLabel, text: $boardingPoint)
-                        TextField("Seat", text: $seat)
-                        TextField("Confirmation #", text: $confirmation)
-                            .textInputAutocapitalization(.characters)
-                    }
-                } else {
-                    Section("Details") {
-                        TextField("Trip name (optional)", text: $title)
+                } header: {
+                    Text(legs.count > 1 ? "Legs (\(legs.count))" : "Legs")
+                } footer: {
+                    if legs.count > 1 {
+                        Text("Swipe to delete, or use Edit to reorder legs.")
                     }
                 }
 
@@ -89,6 +74,9 @@ struct AddEditTripView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
+                ToolbarItem(placement: .topBarLeading) {
+                    if legs.count > 1 { EditButton() }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { save() }
                         .disabled(!canSave || isSaving)
@@ -99,53 +87,108 @@ struct AddEditTripView: View {
                     ProgressView("Saving…").controlSize(.large)
                 }
             }
+            .sheet(isPresented: $showingLegEditor) {
+                if let idx = editingIndex, legs.indices.contains(idx) {
+                    LegEditorView(titleText: "Edit Leg", draft: legs[idx]) { updated in
+                        legs[idx] = updated
+                    }
+                } else {
+                    LegEditorView(titleText: "Add Leg", draft: newLegDraft()) { added in
+                        legs.append(added)
+                    }
+                }
+            }
             .onAppear(perform: loadIfEditing)
         }
     }
 
-    private func loadIfEditing() {
-        guard let trip else { return }
-        type = trip.type
-        title = trip.title
-        origin = trip.origin
-        destination = trip.destination
-        departureDate = trip.departureDate
-        if let arrival = trip.arrivalDate {
-            hasArrival = true
-            arrivalDate = arrival
+    private func legRow(index: Int, leg: LegDraft) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: leg.type.symbol)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(leg.type.gradient, in: .circle)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(leg.type.label) · \(Format.date(leg.departureDate))")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(leg.type.accent)
+                Text(leg.routeSummary)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.caption).foregroundStyle(.tertiary)
         }
-        operatorName = trip.operatorName ?? ""
-        vehicleNumber = trip.vehicleNumber ?? ""
-        boardingPoint = trip.boardingPoint ?? ""
-        seat = trip.seat ?? ""
-        confirmation = trip.confirmation ?? ""
+    }
+
+    /// A fresh leg pre-chained from the last leg's destination, if any.
+    private func newLegDraft() -> LegDraft {
+        var draft = LegDraft()
+        if let last = legs.last {
+            draft.origin = last.destination
+            draft.departureDate = last.hasArrival ? last.arrivalDate : last.departureDate
+        }
+        return draft
+    }
+
+    private func loadIfEditing() {
+        guard let trip, legs.isEmpty else { return }
+        title = trip.title
         notes = trip.notes ?? ""
+        legs = trip.orderedSegments.map(LegDraft.init(segment:))
+        if legs.isEmpty {
+            // A trip somehow without segments — seed from its flat summary.
+            legs = trip.displaySegments.map(LegDraft.init(segment:))
+        }
     }
 
     private func save() {
-        guard var origin, var destination else { return }
+        guard canSave else { return }
         isSaving = true
+        let capturedLegs = legs
+        let tripTitle = title.trimmingCharacters(in: .whitespaces)
+        let tripNotes = emptyToNil(notes)
         Task {
-            // Ensure country / locality are populated for the Passport & Map.
-            if origin.isoCountryCode == nil { origin = await origin.reverseGeocoded() }
-            if destination.isoCountryCode == nil { destination = await destination.reverseGeocoded() }
+            var segments: [TripSegment] = []
+            for (i, leg) in capturedLegs.enumerated() {
+                guard var origin = leg.origin, var destination = leg.destination else { continue }
+                if origin.isoCountryCode == nil { origin = await origin.reverseGeocoded() }
+                if destination.isoCountryCode == nil { destination = await destination.reverseGeocoded() }
+                segments.append(TripSegment(
+                    type: leg.type,
+                    origin: origin,
+                    destination: destination,
+                    departureDate: leg.departureDate,
+                    arrivalDate: leg.hasArrival ? leg.arrivalDate : nil,
+                    operatorName: emptyToNil(leg.operatorName),
+                    vehicleNumber: emptyToNil(leg.vehicleNumber),
+                    boardingPoint: emptyToNil(leg.boardingPoint),
+                    seat: emptyToNil(leg.seat),
+                    confirmation: emptyToNil(leg.confirmation),
+                    order: i
+                ))
+            }
+            guard !segments.isEmpty else { isSaving = false; return }
 
-            let target = trip ?? Trip(origin: origin, destination: destination)
-            target.type = type
-            target.title = title
-            target.origin = origin
-            target.destination = destination
-            target.departureDate = departureDate
-            target.arrivalDate = hasArrival ? arrivalDate : nil
-            target.operatorName = emptyToNil(operatorName)
-            target.vehicleNumber = emptyToNil(vehicleNumber)
-            target.boardingPoint = emptyToNil(boardingPoint)
-            target.seat = emptyToNil(seat)
-            target.confirmation = emptyToNil(confirmation)
-            target.notes = emptyToNil(notes)
-
-            if trip == nil {
-                context.insert(target)
+            if let trip {
+                // Replace the trip's legs wholesale, then re-derive its summary.
+                for old in trip.segments { context.delete(old) }
+                trip.segments = []
+                for segment in segments {
+                    context.insert(segment)
+                    segment.trip = trip
+                }
+                trip.segments = segments
+                trip.title = tripTitle
+                trip.notes = tripNotes
+                trip.refreshSummary()
+            } else {
+                let newTrip = Trip.make(title: tripTitle, notes: tripNotes, segments: segments)
+                context.insert(newTrip)
+                for segment in segments { context.insert(segment) }
             }
             try? context.save()
             isSaving = false
@@ -161,7 +204,7 @@ struct AddEditTripView: View {
 
 #if DEBUG
 #Preview {
-    AddEditTripView()
+    AddEditTripView(trip: .sampleMultiModal)
         .modelContainer(PreviewData.container)
 }
 #endif
