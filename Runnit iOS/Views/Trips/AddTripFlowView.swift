@@ -752,7 +752,8 @@ struct AddTripFlowView: View {
 
 /// A calm, near-neutral background for the add-trip flow: a soft base gradient
 /// with a single faint accent glow. Intentionally quieter than `AppBackground`.
-private struct PlanBackground: View {
+/// Shared by the add-trip wizard and the trip/leg editors.
+struct PlanBackground: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
