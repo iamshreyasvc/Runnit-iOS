@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Only keep the newest run per branch/PR in flight.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT: "Runnit iOS.xcodeproj"
+  SCHEME: "Runnit iOS"
+  # Minimum line coverage (%) for the app target; the build fails below this.
+  # A deliberately conservative floor: most of the app is SwiftUI views that
+  # only pick up incidental (and slightly nondeterministic) coverage from the
+  # test host launching. The deterministic logic layer is covered well above
+  # this. Ratchet upward as UI/integration tests are added.
+  COVERAGE_MIN: "15"
+
+jobs:
+  lint:
+    name: SwiftLint
+    # SwiftLint needs no Xcode; a lightweight macOS runner keeps it fast.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SwiftLint
+        run: swiftlint version || brew install swiftlint
+
+      - name: Run SwiftLint
+        # Non-strict: warnings surface in logs and annotations but don't fail CI;
+        # any error-level violation does. Run `swiftlint --strict` locally to be
+        # warning-clean before raising the bar here.
+        run: swiftlint lint --reporter github-actions-logging
+
+  test:
+    name: Build, Test & Coverage
+    # macOS 26 image ships Xcode 26 with the iOS 26.5 SDK this app targets.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          echo "---"
+          xcodebuild -showsdks | grep -i iphone || true
+
+      - name: Select an available iOS simulator
+        run: |
+          DEVICE=$(xcrun simctl list devices available \
+            | awk -F '[()]' '/iPhone/ { gsub(/^ +| +$/, "", $1); print $1; exit }')
+          if [ -z "$DEVICE" ]; then
+            echo "No available iPhone simulator found" >&2
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "Using simulator: $DEVICE"
+          echo "SIMULATOR=$DEVICE" >> "$GITHUB_ENV"
+
+      - name: Install log formatter
+        run: brew install xcbeautify || true
+
+      - name: Build & test with coverage
+        run: |
+          set -o pipefail
+          if command -v xcbeautify >/dev/null; then
+            FMT=(xcbeautify --renderer github-actions)
+          else
+            FMT=(cat)
+          fi
+          xcodebuild test \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -destination "platform=iOS Simulator,name=$SIMULATOR" \
+            -resultBundlePath TestResults.xcresult \
+            -enableCodeCoverage YES \
+            CODE_SIGNING_ALLOWED=NO \
+            | "${FMT[@]}"
+
+      - name: Enforce coverage threshold
+        run: Scripts/coverage-report.sh TestResults.xcresult "$COVERAGE_MIN"
+
+      - name: Upload test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults.xcresult
+          retention-days: 14
+          if-no-files-found: warn
