@@ -10,6 +10,18 @@
 import SwiftUI
 import SwiftData
 
+/// The leg-editor sheet target: a new leg, or an existing one by index.
+private enum LegEditTarget: Identifiable {
+    case new
+    case existing(Int)
+    var id: String {
+        switch self {
+        case .new:              return "new"
+        case .existing(let i):  return "existing-\(i)"
+        }
+    }
+}
+
 struct AddEditTripView: View {
     /// Existing trip to edit, or nil to create a new one.
     var trip: Trip?
@@ -22,9 +34,10 @@ struct AddEditTripView: View {
     @State private var notes: String = ""
     @State private var legs: [LegDraft] = []
 
-    /// Sheet state: editing an existing leg (by index) or adding a new one.
-    @State private var editingIndex: Int?
-    @State private var showingLegEditor = false
+    /// Which leg editor to present. Using `.sheet(item:)` (not a separate Bool +
+    /// index) guarantees the sheet always reads the intended target — otherwise
+    /// tapping a leg could open the "Add" branch and append a duplicate.
+    @State private var legEditTarget: LegEditTarget?
     @State private var isSaving = false
 
     private let accent: Color = .cyan
@@ -65,12 +78,13 @@ struct AddEditTripView: View {
                         .glassEffect(.regular, in: .rect(cornerRadius: 20))
                 }
             }
-            .sheet(isPresented: $showingLegEditor) {
-                if let idx = editingIndex, legs.indices.contains(idx) {
+            .sheet(item: $legEditTarget) { target in
+                switch target {
+                case .existing(let idx) where legs.indices.contains(idx):
                     LegEditorView(titleText: "Edit Leg", draft: legs[idx]) { updated in
                         legs[idx] = updated
                     }
-                } else {
+                default:
                     LegEditorView(titleText: "Add Leg", draft: newLegDraft()) { added in
                         legs.append(added)
                     }
@@ -97,8 +111,7 @@ struct AddEditTripView: View {
         Section {
             ForEach(Array(legs.enumerated()), id: \.element.id) { idx, leg in
                 Button {
-                    editingIndex = idx
-                    showingLegEditor = true
+                    legEditTarget = .existing(idx)
                 } label: {
                     legRow(index: idx, leg: leg)
                 }
@@ -109,8 +122,7 @@ struct AddEditTripView: View {
             .onMove { legs.move(fromOffsets: $0, toOffset: $1) }
 
             Button {
-                editingIndex = nil
-                showingLegEditor = true
+                legEditTarget = .new
             } label: {
                 Label("Add leg", systemImage: "plus.circle.fill")
                     .fontWeight(.semibold)
