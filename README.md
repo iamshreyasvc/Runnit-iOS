@@ -1,5 +1,7 @@
 # Runnit
 
+[![CI](https://github.com/iamshreyasvc/Runnit-iOS/actions/workflows/ci.yml/badge.svg)](https://github.com/iamshreyasvc/Runnit-iOS/actions/workflows/ci.yml)
+
 A **Flighty-style trip tracker for every kind of journey** — flights, trains, and road trips — built for iOS 26 with SwiftUI, SwiftData, and Liquid Glass.
 
 Where Flighty tracks only flights, Runnit keeps your whole travel history in one place: upcoming and past trips, an interactive map of your routes, and a "Passport" of stats and country stamps.
@@ -42,6 +44,9 @@ Runnit iOS/
 │                   TripStatistics, FlightStatusProvider (future-live seam)
 ├── Support/        DesignSystem, AppBackground, Preferences
 └── Views/          Trips (list, card, detail, add wizard), Passport, Account
+
+Runnit iOSTests/    Swift Testing unit tests for the logic layer
+Scripts/            test.sh + coverage-report.sh (shared by local runs and CI)
 ```
 
 Key decisions:
@@ -51,6 +56,34 @@ Key decisions:
 - **Local storage** — SwiftData only for v1; CloudKit sync is a small later change.
 
 See [ROADMAP.md](ROADMAP.md) for planned features and design directions.
+
+## Testing & CI
+
+Unit tests (Swift Testing) cover the pure-logic layer — models, statistics, formatting, and preferences — in `Runnit iOSTests/`.
+
+Run the full build + test + coverage gate locally exactly as CI does:
+
+```bash
+Scripts/test.sh                 # auto-picks an available iPhone simulator
+COVERAGE_MIN=30 Scripts/test.sh # raise the coverage bar
+```
+
+Or drive `xcodebuild` directly:
+
+```bash
+xcodebuild test \
+  -project "Runnit iOS.xcodeproj" -scheme "Runnit iOS" \
+  -destination 'platform=iOS Simulator,name=iPhone 17' \
+  -enableCodeCoverage YES CODE_SIGNING_ALLOWED=NO
+```
+
+Every push to `main` and every pull request runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml), which:
+
+1. **Lints** with [SwiftLint](.swiftlint.yml) (error-level violations fail the build; warnings are annotated). Run `swiftlint --strict` locally to stay warning-clean.
+2. **Builds & tests** on an iOS 26 simulator with coverage enabled.
+3. **Enforces coverage** for the app target via [`Scripts/coverage-report.sh`](Scripts/coverage-report.sh) — the build fails below `COVERAGE_MIN` (currently **15%**) and a per-file coverage table is posted to the run summary.
+
+The threshold is a deliberately conservative floor: most of the app is SwiftUI views that only gain incidental coverage from the test host launching, while the deterministic logic layer (models, statistics, formatting) is covered well above it. Ratchet the floor upward as UI/integration tests are added.
 
 ## Status
 

@@ -8,3 +8,10 @@ xcuserdata/
 # Build
 build/
 DerivedData/
+
+# Test / coverage artifacts
+*.xcresult
+
+# Secrets — never commit real API keys.
+Secrets.plist
+Runnit iOS/Secrets.plist
