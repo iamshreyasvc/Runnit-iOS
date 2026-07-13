@@ -704,9 +704,11 @@ struct AddTripFlowView: View {
         goingForward = true
         withAnimation(.snappy) { index = 0 }
     }
+}
 
-    // MARK: Save
+// MARK: - Save
 
+extension AddTripFlowView {
     private func save() {
         guard !legs.isEmpty else { return }
         isSaving = true
