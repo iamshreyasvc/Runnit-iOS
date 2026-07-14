@@ -51,6 +51,7 @@ struct AddEditTripView: View {
                 List {
                     nameSection
                     legsSection
+                    connectionsSection
                     notesSection
                 }
                 .scrollContentBackground(.hidden)
@@ -139,6 +140,33 @@ struct AddEditTripView: View {
         }
     }
 
+    /// Connections implied by the current legs. Its own section on purpose: the
+    /// legs ForEach has to stay one row per leg or swipe-to-delete and drag-to-
+    /// reorder would map to the wrong indices.
+    @ViewBuilder
+    private var connectionsSection: some View {
+        let connections = legs.draftConnections
+        if !connections.isEmpty {
+            Section {
+                ForEach(connections) { connection in
+                    ConnectionStrip(connection: connection)
+                        .listRowBackground(rowBackground)
+                }
+            } header: {
+                Text(connections.count > 1 ? "Connections (\(connections.count))" : "Connection")
+            } footer: {
+                if let worst = connections.first(where: { $0.risk.isUrgent }) {
+                    Text(worst.risk == .missed
+                         ? "This itinerary can't be flown as entered — check the times."
+                         : "Tight on the ground. Double-check the times, or allow more room.")
+                        .foregroundStyle(.orange)
+                } else {
+                    Text("Layovers are measured from the previous leg's arrival time.")
+                }
+            }
+        }
+    }
+
     private var notesSection: some View {
         Section("Notes") {
             TextField("Anything to remember…", text: $notes, axis: .vertical)
@@ -159,7 +187,7 @@ struct AddEditTripView: View {
                 .frame(width: 32, height: 32)
                 .background(leg.type.gradient, in: .circle)
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(leg.type.label) · \(Format.date(leg.departureDate))")
+                Text("\(leg.type.label) · \(Format.date(leg.departureDate, in: leg.origin?.timeZone))")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(leg.type.accent)
                 Text(leg.routeSummary)
@@ -177,12 +205,16 @@ struct AddEditTripView: View {
         }
     }
 
-    /// A fresh leg pre-chained from the last leg's destination, if any.
+    /// A fresh leg pre-chained from the last leg's destination, if any. It starts
+    /// a couple of hours after that leg ends — a leg departing the instant the
+    /// previous one lands is a connection you'd miss.
     private func newLegDraft() -> LegDraft {
         var draft = LegDraft()
         if let last = legs.last {
+            draft.type = last.type
             draft.origin = last.destination
-            draft.departureDate = last.hasArrival ? last.arrivalDate : last.departureDate
+            let previousEnd = last.hasArrival ? last.arrivalDate : last.departureDate
+            draft.departureDate = previousEnd.addingTimeInterval(2 * 3600)
         }
         return draft
     }
@@ -318,10 +350,8 @@ struct AddEditTripView: View {
 
 #if DEBUG
 #Preview {
-    let usage = APIUsageTracker()
-    return AddEditTripView(trip: .sampleMultiModal)
+    AddEditTripView(trip: .sampleMultiModal)
         .modelContainer(PreviewData.container)
-        .environment(usage)
-        .environment(FlightTracker(usage: usage))
+        .environment(FlightTracker())
 }
 #endif

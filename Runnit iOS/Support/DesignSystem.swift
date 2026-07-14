@@ -38,6 +38,40 @@ extension TripType {
     }
 }
 
+extension ConnectionRisk {
+    var color: Color {
+        switch self {
+        case .comfortable:      return .green
+        case .tight, .atRisk:   return .orange
+        case .missed, .cancelled: return .red
+        case .unknown:          return TripType.flight.accent
+        }
+    }
+}
+
+/// A small capped label/value pill — "Terminal 2", "Gate E5", "Delay +55m".
+struct InfoChip: View {
+    let label: String
+    let value: String
+    let tint: Color
+
+    init(_ label: String, _ value: String, tint: Color) {
+        self.label = label
+        self.value = value
+        self.tint = tint
+    }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Text(label).foregroundStyle(.secondary)
+            Text(value).fontWeight(.semibold)
+        }
+        .font(.caption2)
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(tint.opacity(0.14), in: .capsule)
+    }
+}
+
 enum Format {
     /// Distance from meters, honoring the user's distance-unit preference.
     static func distance(_ meters: Double) -> String {
@@ -61,12 +95,50 @@ enum Format {
             .formatted(.units(allowed: [.hours, .minutes], width: .abbreviated))
     }
 
-    static func date(_ date: Date) -> String {
-        date.formatted(.dateTime.month(.abbreviated).day().year())
+    // Times are rendered on the clock at the place they happen — the airport's,
+    // not the device's — which is how airlines print them on a boarding pass.
+    // Passing no zone keeps the device's, for dates that aren't tied to a place.
+
+    static func date(_ date: Date, in zone: TimeZone? = nil) -> String {
+        date.formatted(style(zone).month(.abbreviated).day().year())
     }
 
-    static func dateTime(_ date: Date) -> String {
-        date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+    static func dateTime(_ date: Date, in zone: TimeZone? = nil) -> String {
+        date.formatted(style(zone).month(.abbreviated).day().hour().minute())
+    }
+
+    /// Just the clock time, e.g. "1:15 PM".
+    static func time(_ date: Date, in zone: TimeZone? = nil) -> String {
+        date.formatted(style(zone).hour().minute())
+    }
+
+    private static func style(_ zone: TimeZone?) -> Date.FormatStyle {
+        Date.FormatStyle(timeZone: zone ?? .current)
+    }
+
+    /// A short zone label for a moment, e.g. "PDT". Nil when the zone is unknown.
+    static func zone(_ zone: TimeZone?, at date: Date) -> String? {
+        zone?.abbreviation(for: date)
+    }
+
+    /// How the clock changes across a leg, e.g. "PDT → EDT · 3 hr ahead".
+    /// Nil when both ends share a clock (or either is unknown) — nothing to say.
+    static func zoneShift(from origin: TimeZone?, to destination: TimeZone?,
+                          departing: Date, arriving: Date) -> String? {
+        guard let origin, let destination else { return nil }
+        let originOffset = origin.secondsFromGMT(for: departing)
+        let destinationOffset = destination.secondsFromGMT(for: arriving)
+        guard originOffset != destinationOffset else { return nil }
+
+        let delta = destinationOffset - originOffset
+        let hours = Double(abs(delta)) / 3600
+        let amount = hours == hours.rounded()
+            ? "\(Int(hours)) hr"
+            : String(format: "%.1f hr", hours)
+        let direction = delta > 0 ? "ahead" : "behind"
+        let from = origin.abbreviation(for: departing) ?? origin.identifier
+        let to = destination.abbreviation(for: arriving) ?? destination.identifier
+        return "\(from) → \(to) · \(amount) \(direction)"
     }
 
     /// Relative status label, e.g. "in 3 days" or "2 weeks ago".

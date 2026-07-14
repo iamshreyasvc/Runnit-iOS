@@ -4,8 +4,13 @@
 //
 //  Turns a flight number + travel date into fully-resolved trip details:
 //  airline, both airports (as map-ready Places), and departure/arrival stamped
-//  onto the chosen date in each airport's local timezone. One aviation-API call
-//  (via FlightTracker.lookup) plus free Apple local-search for coordinates.
+//  onto the chosen date in each airport's local timezone. Backed by
+//  FlightTracker.lookup plus free Apple local-search for coordinates.
+//
+//  Caveat worth knowing: Flightradar24 publishes no forward schedules, so the
+//  times here are lifted from the most recent completed operation of the same
+//  flight number (see FlightTracker.lookup). For a daily service that lands
+//  within a few minutes of the truth; it is not a published timetable.
 //
 
 import Foundation
@@ -30,14 +35,14 @@ enum FlightAutofill {
         case notFound
         case invalidNumber
         case noKey
-        case quotaExceeded
+        case insufficientCredits
         case failed
 
         static func == (l: Outcome, r: Outcome) -> Bool {
             switch (l, r) {
             case (.notFound, .notFound), (.invalidNumber, .invalidNumber),
-                 (.noKey, .noKey), (.quotaExceeded, .quotaExceeded), (.failed, .failed),
-                 (.filled, .filled):
+                 (.noKey, .noKey), (.insufficientCredits, .insufficientCredits),
+                 (.failed, .failed), (.filled, .filled):
                 return true
             default: return false
             }
@@ -48,9 +53,9 @@ enum FlightAutofill {
             switch self {
             case .filled:        return nil
             case .invalidNumber: return "Enter a flight number like \u{201C}AA 100\u{201D}."
-            case .notFound:      return "Couldn't find that flight operating today. On the free plan only same-day flights are searchable — enter the details manually."
-            case .noKey:         return "Add your AviationStack API key (Account tab) to look flights up automatically."
-            case .quotaExceeded: return "Monthly API limit reached — enter the flight details manually."
+            case .notFound:      return "Couldn't find that flight number in the last week. Flightradar24 has no data on flights that haven't flown yet — enter the details manually."
+            case .noKey:         return "Add your Flightradar24 API token (Account tab) to look flights up automatically."
+            case .insufficientCredits: return "Flightradar24 credits exhausted — top up your plan, or enter the flight details manually."
             case .failed:        return "Lookup failed. Check your connection or enter the details manually."
             }
         }
@@ -58,15 +63,21 @@ enum FlightAutofill {
 
     static func run(flightNumber: String, date: Date, tracker: FlightTracker) async -> Outcome {
         switch await tracker.lookup(flightNumber: flightNumber) {
-        case .invalidNumber: return .invalidNumber
-        case .noKey:         return .noKey
-        case .quotaExceeded: return .quotaExceeded
-        case .failed:        return .failed
-        case .notFound:      return .notFound
+        case .invalidNumber:       return .invalidNumber
+        case .noKey:               return .noKey
+        case .insufficientCredits: return .insufficientCredits
+        case .failed:              return .failed
+        case .notFound:            return .notFound
         case .success(let r):
             let search = LocationSearchService()
-            let origin = await search.resolveAirport(name: r.departureAirportName, iata: r.departureIata)
-            let destination = await search.resolveAirport(name: r.arrivalAirportName, iata: r.arrivalIata)
+            var origin = await search.resolveAirport(name: r.departureAirportName, iata: r.departureIata)
+            var destination = await search.resolveAirport(name: r.arrivalAirportName, iata: r.arrivalIata)
+            // The API is authoritative about each airport's clock — keep it, so the
+            // leg can render local times even when there's no live status record.
+            // Only overwrite when the API actually named a zone; never clear one the
+            // airport lookup already resolved.
+            if let zone = r.departureTimeZone { origin?.timeZoneIdentifier = zone }
+            if let zone = r.arrivalTimeZone { destination?.timeZoneIdentifier = zone }
 
             let departure = stamp(r.departureScheduled, onto: date, timeZone: r.departureTimeZone)
             var arrival = stamp(r.arrivalScheduled, onto: date, timeZone: r.arrivalTimeZone)

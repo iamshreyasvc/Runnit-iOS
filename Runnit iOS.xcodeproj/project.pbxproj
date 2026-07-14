@@ -6,6 +6,16 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		FADE0000000000000000AA0A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1B3D7C8830033F910041BBB1 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1B3D7C8F30033F910041BBB1;
+			remoteInfo = "Runnit iOS";
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		1B3D7C9030033F910041BBB1 /* Runnit iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Runnit iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		FADE0000000000000000AA03 /* Runnit iOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Runnit iOSTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -181,16 +191,6 @@
 		};
 /* End PBXTargetDependency section */
 
-/* Begin PBXContainerItemProxy section */
-		FADE0000000000000000AA0A /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 1B3D7C8830033F910041BBB1 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 1B3D7C8F30033F910041BBB1;
-			remoteInfo = "Runnit iOS";
-		};
-/* End PBXContainerItemProxy section */
-
 /* Begin XCBuildConfiguration section */
 		1B3D7C9930033F920041BBB1 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -321,7 +321,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "Config/Info.plist";
+				INFOPLIST_FILE = Config/Info.plist;
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Runnit uses your location to show your position on the trip map.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -367,7 +367,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "Config/Info.plist";
+				INFOPLIST_FILE = Config/Info.plist;
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Runnit uses your location to show your position on the trip map.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;

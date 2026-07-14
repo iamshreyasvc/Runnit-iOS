@@ -3,27 +3,15 @@
 <plist version="1.0">
 <dict>
 	<!--
-	  AviationStack's free tier serves the API over plain HTTP only (HTTPS is a
-	  paid feature), so we allow an insecure load for that one host. Everything
-	  else stays under the default App Transport Security policy.
+	  Intentionally near-empty. This file used to carry an App Transport Security
+	  exception for api.aviationstack.com, whose free tier was HTTP-only. Live
+	  tracking now runs on Flightradar24 over HTTPS, so the app needs no ATS
+	  exceptions at all and runs under the default policy.
 
-	  GENERATE_INFOPLIST_FILE is still YES; Xcode merges the generated keys
-	  (scene manifest, launch screen, orientations, location usage string, etc.)
-	  on top of this file at build time — this file only adds what can't be
-	  expressed as a flat INFOPLIST_KEY_* build setting.
+	  GENERATE_INFOPLIST_FILE is still YES; Xcode merges the generated keys (scene
+	  manifest, launch screen, orientations, location usage string, etc.) on top of
+	  this file at build time — this file only adds what can't be expressed as a
+	  flat INFOPLIST_KEY_* build setting. Nothing currently qualifies.
 	-->
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSExceptionDomains</key>
-		<dict>
-			<key>api.aviationstack.com</key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-				<key>NSIncludesSubdomains</key>
-				<true/>
-			</dict>
-		</dict>
-	</dict>
 </dict>
 </plist>

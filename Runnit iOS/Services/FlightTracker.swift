@@ -2,11 +2,15 @@
 //  FlightTracker.swift
 //  Runnit iOS
 //
-//  The single choke point for AviationStack calls. Views never touch the client
+//  The single choke point for Flightradar24 calls. Views never touch the client
 //  directly — they read cached `FlightStatusRecord`s and ask the tracker to
-//  refresh. Every network path here is gated to protect the 100-call/month free
-//  tier: cache-first, freeze-on-final, quota checks, and negative caching so a
-//  "no data" answer isn't retried in a loop.
+//  refresh. Fetches are still cache-first and freeze on landing, because a landed
+//  flight's facts never change again.
+//
+//  FR24 has no schedule feed: a leg is invisible to the API until it actually
+//  flies. `isWithinTrackingReach` encodes that — it opens at departure time and
+//  stays open into the past, which is the mirror image of the old AviationStack
+//  rule (same-day only, nothing historical).
 //
 
 import Foundation
@@ -15,33 +19,45 @@ import SwiftData
 
 /// What a refresh attempt did — surfaced to the UI for messaging.
 enum RefreshOutcome: Equatable {
-    case updated          // fetched fresh live data
-    case noData           // API answered but had no matching flight
-    case frozen           // already landed/cancelled; nothing to do
-    case notTrackable     // missing/unparseable flight number
-    case notYetTrackable  // real flight, but not within the free tier's real-time reach yet
-    case noKey            // no API key configured
-    case quotaExceeded    // monthly budget spent
-    case skippedFresh     // cache still fresh; no call made
-    case failed           // transport/decoding error
+    case updated              // fetched fresh data
+    case noData               // API answered but knows nothing about this flight
+    case frozen               // already landed/diverted; nothing to do
+    case notTrackable         // missing/unparseable flight number
+    case notYetTrackable      // real flight, but it hasn't flown yet — FR24 has no schedules
+    case noKey                // no API token configured
+    case insufficientCredits  // FR24 returned 402
+    case skippedFresh         // cache still fresh; no call made
+    case failed               // transport/decoding error
+}
+
+/// One flight, assembled from the FR24 endpoints that each hold a piece of it.
+struct FR24Snapshot: Equatable {
+    var phase: FlightPhase
+    var flightIata: String?
+    var airlineName: String?
+    var takeoff: Date?
+    var landed: Date?
+    var eta: Date?
+    /// Present only while airborne — the sole source of telemetry.
+    var position: FR24Position?
 }
 
 @MainActor
 @Observable
 final class FlightTracker {
-    let usage: APIUsageTracker
-    private let client: AviationStackClient
+    private let client: FR24Client
+    private let statics: FR24StaticCache
 
-    init(usage: APIUsageTracker, client: AviationStackClient = AviationStackClient()) {
-        self.usage = usage
+    init(client: FR24Client = FR24Client(), statics: FR24StaticCache? = nil) {
         self.client = client
+        self.statics = statics ?? FR24StaticCache()
     }
 
     // MARK: Lookup (for auto-fill when adding/editing a flight)
 
     /// The raw facts a flight-number lookup returns. Times carry the API's
-    /// scheduled instants; the airport timezones let the caller stamp them onto a
-    /// chosen travel date correctly.
+    /// instants; the airport timezones let the caller stamp them onto a chosen
+    /// travel date correctly.
     struct FlightLookupResult {
         var airlineName: String?
         var flightIata: String?
@@ -60,13 +76,14 @@ final class FlightTracker {
         case notFound
         case invalidNumber
         case noKey
-        case quotaExceeded
+        case insufficientCredits
         case failed
 
         static func == (l: FlightLookupOutcome, r: FlightLookupOutcome) -> Bool {
             switch (l, r) {
             case (.notFound, .notFound), (.invalidNumber, .invalidNumber),
-                 (.noKey, .noKey), (.quotaExceeded, .quotaExceeded), (.failed, .failed):
+                 (.noKey, .noKey), (.insufficientCredits, .insufficientCredits),
+                 (.failed, .failed):
                 return true
             case (.success, .success): return true
             default: return false
@@ -74,37 +91,65 @@ final class FlightTracker {
         }
     }
 
-    /// Look up a flight by number to auto-fill trip details. Spends one call.
-    /// The free tier only serves today's flights, so this returns today's instance
-    /// of the number (route/airline/times are stable enough to prefill a future
-    /// trip); `.notFound` when the flight isn't operating today.
+    /// How far back to look for a previous operation of a flight number. FR24
+    /// caps a summary query at a 14-day span; a week comfortably covers daily and
+    /// most weekly services while keeping the response small.
+    private static let lookbackDays = 7
+
+    /// Look up a flight by number to auto-fill trip details.
+    ///
+    /// FR24 publishes no forward schedules, so there is nothing to ask about a
+    /// flight that hasn't happened yet. Instead we take the most recent completed
+    /// operation of that number and use *its* route and actual times as the
+    /// prefill. For a regular scheduled service that's a good approximation — but
+    /// they are last week's actual times, not a published schedule, so they can be
+    /// off by minutes.
     func lookup(flightNumber: String) async -> FlightLookupOutcome {
         guard let iata = FlightIdentityParser.normalizedFlightIata(from: flightNumber) else {
             return .invalidNumber
         }
-        guard Secrets.hasAviationStackKey else { return .noKey }
-        guard usage.canSpend else { return .quotaExceeded }
+        guard Secrets.hasFlightRadarToken else { return .noKey }
 
         do {
-            let flight = try await client.fetch(flightIata: iata, departureIata: nil, target: nil)
-            usage.record()
-            guard let flight else { return .notFound }
+            let now = Date()
+            let window = TimeInterval(Self.lookbackDays * 24 * 3600)
+            let summaries = try await client.summaries(
+                flightIata: iata,
+                from: now.addingTimeInterval(-window),
+                to: now
+            )
+
+            // Only a leg that actually departed tells us anything about the route.
+            guard let best = summaries
+                .filter({ $0.datetimeTakeoff != nil })
+                .max(by: { ($0.firstSeen ?? "") < ($1.firstSeen ?? "") })
+            else { return .notFound }
+
+            // Use the *filed* destination, not `dest_iata_actual`: if last week's
+            // flight diverted, the traveler is still booked to where it was going.
+            let depIata = best.origIata
+            let arrIata = best.destIata
+
+            async let depAirport = statics.airport(code: depIata)
+            async let arrAirport = statics.airport(code: arrIata)
+            async let airline = statics.airlineName(icao: best.paintedAs ?? best.operatingAs)
+            let (dep, arr, airlineName) = await (depAirport, arrAirport, airline)
+
             return .success(FlightLookupResult(
-                airlineName: flight.airline?.name,
-                flightIata: flight.flight?.iata ?? iata,
-                departureAirportName: flight.departure?.airport,
-                departureIata: flight.departure?.iata,
-                departureTimeZone: flight.departure?.timezone,
-                departureScheduled: ASDate.parse(flight.departure?.scheduled),
-                arrivalAirportName: flight.arrival?.airport,
-                arrivalIata: flight.arrival?.iata,
-                arrivalTimeZone: flight.arrival?.timezone,
-                arrivalScheduled: ASDate.parse(flight.arrival?.scheduled)
+                airlineName: airlineName,
+                flightIata: best.flight ?? iata,
+                departureAirportName: dep?.name,
+                departureIata: depIata,
+                departureTimeZone: dep?.timezone?.name,
+                departureScheduled: FR24Date.parse(best.datetimeTakeoff),
+                arrivalAirportName: arr?.name,
+                arrivalIata: arrIata,
+                arrivalTimeZone: arr?.timezone?.name,
+                arrivalScheduled: FR24Date.parse(best.datetimeLanded)
             ))
-        } catch AviationStackError.quotaExceeded {
-            usage.markLimitReached()
-            return .quotaExceeded
-        } catch AviationStackError.noKey {
+        } catch FR24Error.insufficientCredits {
+            return .insufficientCredits
+        } catch FR24Error.noToken {
             return .noKey
         } catch {
             return .failed
@@ -124,8 +169,7 @@ final class FlightTracker {
 
     // MARK: Manual refresh
 
-    /// User-initiated refresh for one leg. Honors freeze + quota, always counts
-    /// as a call when it actually reaches the network.
+    /// User-initiated refresh for one leg. Honors the freeze on landed flights.
     @discardableResult
     func refresh(_ segment: TripSegment, in context: ModelContext) async -> RefreshOutcome {
         await fetch(segment, in: context, respectFreshness: false)
@@ -133,17 +177,16 @@ final class FlightTracker {
 
     // MARK: Smart Auto
 
-    /// Called on detail open when Smart Auto is enabled. Only spends a call for a
-    /// leg that is relevant *today* / airborne, has no fresh cache, and is under
-    /// quota. Otherwise does nothing.
+    /// Called on detail open when Smart Auto is enabled. Only fetches for a leg
+    /// that has actually flown, has no fresh cache, and isn't already final.
     @discardableResult
     func autoRefreshIfNeeded(_ segment: TripSegment, in context: ModelContext, enabled: Bool) async -> RefreshOutcome {
-        guard enabled, Secrets.hasAviationStackKey, usage.canSpend else { return .skippedFresh }
+        guard enabled, Secrets.hasFlightRadarToken else { return .skippedFresh }
         guard FlightIdentityParser.canTrack(segment) else { return .notTrackable }
 
         let existing = record(for: segment, in: context)
         if existing?.isFinal == true { return .frozen }
-        guard isRelevantNow(segment, record: existing) else { return .skippedFresh }
+        guard Self.isWithinTrackingReach(segment) else { return .notYetTrackable }
         if let existing, !isStale(existing) { return .skippedFresh }
 
         return await fetch(segment, in: context, respectFreshness: true)
@@ -152,27 +195,18 @@ final class FlightTracker {
     // MARK: Core fetch
 
     private func fetch(_ segment: TripSegment, in context: ModelContext, respectFreshness: Bool) async -> RefreshOutcome {
-        guard Secrets.hasAviationStackKey else { return .noKey }
+        guard Secrets.hasFlightRadarToken else { return .noKey }
         guard let identity = FlightIdentityParser.resolve(segment) else { return .notTrackable }
 
         let existing = record(for: segment, in: context)
         if existing?.isFinal == true { return .frozen }
-        // The free tier only serves real-time data (no historical/future lookups),
-        // so a call is only meaningful when the flight is departing today or is
-        // currently airborne. Otherwise flight_iata returns some OTHER day's
-        // instance of the same number — don't spend a call, don't mislead.
-        guard Self.isWithinRealtimeReach(segment) else { return .notYetTrackable }
+        // FR24 only knows about flights that have flown. Calling before departure
+        // is guaranteed to return nothing, so don't spend the credit.
+        guard Self.isWithinTrackingReach(segment) else { return .notYetTrackable }
         if respectFreshness, let existing, !isStale(existing) { return .skippedFresh }
-        guard usage.canSpend else { return .quotaExceeded }
 
         do {
-            let flight = try await client.fetch(
-                flightIata: identity.flightIata,
-                departureIata: identity.departureIata,
-                target: segment.departureDate
-            )
-            // A response came back and counted against the budget.
-            usage.record()
+            let snapshot = try await resolveSnapshot(identity: identity, segment: segment)
 
             let rec = existing ?? {
                 let r = FlightStatusRecord(segmentID: segment.id)
@@ -180,8 +214,8 @@ final class FlightTracker {
                 return r
             }()
 
-            if let flight {
-                rec.apply(flight)
+            if let snapshot {
+                rec.apply(snapshot, for: segment)
                 try? context.save()
                 return .updated
             } else {
@@ -189,35 +223,106 @@ final class FlightTracker {
                 try? context.save()
                 return .noData
             }
-        } catch AviationStackError.quotaExceeded {
-            usage.markLimitReached()
-            return .quotaExceeded
-        } catch AviationStackError.noKey {
+        } catch FR24Error.insufficientCredits {
+            return .insufficientCredits
+        } catch FR24Error.noToken {
             return .noKey
         } catch {
-            // Transport / decoding / HTTP: no reliable proof a request was billed,
-            // so don't decrement the user's budget for it.
             return .failed
+        }
+    }
+
+    /// Compose one flight from the two endpoints that each hold half of it:
+    /// positions carry telemetry but exist only while airborne; the summary
+    /// carries actual takeoff/landing but no telemetry. Both are queried because a
+    /// flight in the air still has a takeoff time worth showing, and neither
+    /// endpoint alone can tell "hasn't departed" apart from "already landed".
+    private func resolveSnapshot(identity: FlightIdentity, segment: TripSegment) async throws -> FR24Snapshot? {
+        async let positionsTask = client.livePositions(flightIata: identity.flightIata)
+        async let summariesTask = client.summaries(
+            flightIata: identity.flightIata,
+            from: segment.departureDate.addingTimeInterval(-24 * 3600),
+            to: min(segment.departureDate.addingTimeInterval(48 * 3600), Date())
+        )
+        let (positions, summaries) = try await (positionsTask, summariesTask)
+
+        let position = bestPosition(positions, identity: identity)
+        let summary = bestSummary(summaries, identity: identity, target: segment.departureDate)
+
+        // Neither endpoint has heard of this flight — a genuine "no data".
+        guard position != nil || summary != nil else { return nil }
+
+        let airlineICAO = position?.paintedAs ?? position?.operatingAs
+            ?? summary?.paintedAs ?? summary?.operatingAs
+        let airlineName = await statics.airlineName(icao: airlineICAO)
+
+        return FR24Snapshot(
+            phase: phase(position: position, summary: summary),
+            flightIata: position?.flight ?? summary?.flight ?? identity.flightIata,
+            airlineName: airlineName,
+            takeoff: FR24Date.parse(summary?.datetimeTakeoff),
+            landed: FR24Date.parse(summary?.datetimeLanded),
+            eta: FR24Date.parse(position?.eta),
+            position: position
+        )
+    }
+
+    /// FR24 exposes no status field. The phase is inferred from which endpoint
+    /// answered: airborne beats landed beats "known, but not departed yet".
+    /// `.cancelled` is unreachable — FR24 publishes no cancellation data at all.
+    private func phase(position: FR24Position?, summary: FR24Summary?) -> FlightPhase {
+        if position != nil { return .active }
+        guard let summary else { return .unknown }
+        guard summary.datetimeLanded != nil else { return .scheduled }
+        // Landing somewhere other than the filed destination is a diversion.
+        if let planned = summary.destIata, let actual = summary.destIataActual,
+           planned.uppercased() != actual.uppercased() {
+            return .diverted
+        }
+        return .landed
+    }
+
+    /// Disambiguate codeshares: prefer the aircraft flying this leg's own route.
+    private func bestPosition(_ positions: [FR24Position], identity: FlightIdentity) -> FR24Position? {
+        guard !positions.isEmpty else { return nil }
+        if let dep = identity.departureIata,
+           let match = positions.first(where: { $0.origIata?.uppercased() == dep.uppercased() }) {
+            return match
+        }
+        return positions.first
+    }
+
+    /// Pick the leg closest to the one the traveler actually booked: matching
+    /// route first, then whichever first appeared nearest the planned departure.
+    private func bestSummary(_ summaries: [FR24Summary], identity: FlightIdentity, target: Date) -> FR24Summary? {
+        guard !summaries.isEmpty else { return nil }
+
+        var pool = summaries
+        if let dep = identity.departureIata {
+            let matches = pool.filter { $0.origIata?.uppercased() == dep.uppercased() }
+            if !matches.isEmpty { pool = matches }
+        }
+
+        return pool.min { a, b in
+            let da = FR24Date.parse(a.firstSeen).map { abs($0.timeIntervalSince(target)) } ?? .greatestFiniteMagnitude
+            let db = FR24Date.parse(b.firstSeen).map { abs($0.timeIntervalSince(target)) } ?? .greatestFiniteMagnitude
+            return da < db
         }
     }
 
     // MARK: Policy helpers
 
-    /// Whether the free tier's real-time endpoint can meaningfully answer for this
-    /// leg: it must be departing today or currently in the air. Outside this window
-    /// the API can only return a different day's instance of the same flight number.
-    nonisolated static func isWithinRealtimeReach(_ segment: TripSegment, now: Date = Date()) -> Bool {
-        let cal = Calendar.current
-        if cal.isDateInToday(segment.departureDate) { return true }
-        if let arr = segment.arrivalDate, cal.isDateInToday(arr) { return true }
-        let end = (segment.arrivalDate ?? segment.departureDate).addingTimeInterval(2 * 3600)
-        return now >= segment.departureDate && now <= end
-    }
-
-    /// Whether this leg is worth spending a call on right now (day-of or airborne).
-    private func isRelevantNow(_ segment: TripSegment, record: FlightStatusRecord?) -> Bool {
-        if record?.phase == .active { return true }
-        return Self.isWithinRealtimeReach(segment)
+    /// Whether FR24 can meaningfully answer for this leg.
+    ///
+    /// Where AviationStack's free tier served only today, FR24 is the opposite:
+    /// strong on history (summaries back to 2022-06-01) and blind to the future —
+    /// a flight doesn't exist in the API until it's in the air. So the window opens
+    /// shortly before the planned departure (the hour of slack absorbs early
+    /// pushbacks, and the fact that this departure time is whatever the user typed)
+    /// and then never closes.
+    nonisolated static func isWithinTrackingReach(_ segment: TripSegment, now: Date = Date()) -> Bool {
+        guard segment.departureDate >= FR24Client.summaryFloor else { return false }
+        return now >= segment.departureDate.addingTimeInterval(-3600)
     }
 
     /// Cache staleness by phase — the only thing that permits an auto-refetch.

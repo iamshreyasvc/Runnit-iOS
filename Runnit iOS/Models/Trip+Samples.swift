@@ -12,6 +12,71 @@ extension Trip {
     static func daysFromNow(_ days: Int) -> Date {
         Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
     }
+
+    /// The shipped example of a connection under pressure: SFO → ORD → JFK on
+    /// United, departing today. The inbound lands 55 minutes late into Terminal 1
+    /// while the outbound leaves Terminal 2, so a booked 1 h 50 m layover collapses
+    /// to 55 minutes against a 65-minute requirement — "At risk", with the terminal
+    /// change called out.
+    ///
+    /// The legs must depart *today*: outside real-time reach the seeded snapshots
+    /// aren't displayable and the gates and delay would never show. The snapshots
+    /// are ordinary records on the ordinary code path — with an API key, a Refresh
+    /// simply replaces them with live data.
+    ///
+    /// Returns fresh instances each call; the caller inserts them into a context.
+    static func makeSampleConnection(
+        origin: Place, connectingAt hub: Place, destination: Place
+    ) -> (trip: Trip, records: [FlightStatusRecord]) {
+        let now = Date()
+        func hours(_ h: Double) -> Date { now.addingTimeInterval(h * 3600) }
+        func minutes(_ m: Double) -> TimeInterval { m * 60 }
+
+        let inbound = TripSegment(
+            type: .flight, origin: origin, destination: hub,
+            departureDate: hours(2), arrivalDate: hours(6),
+            operatorName: "United", vehicleNumber: "UA 355",
+            boardingPoint: "G8", seat: "22C", confirmation: "RN4K2P", order: 0
+        )
+        // A booked 1 h 50 m layover — generous, until the inbound runs 55 min late.
+        let outbound = TripSegment(
+            type: .flight, origin: hub, destination: destination,
+            departureDate: hours(6).addingTimeInterval(minutes(110)), arrivalDate: hours(10),
+            operatorName: "United", vehicleNumber: "UA 1290",
+            boardingPoint: "E5", seat: "18F", confirmation: "RN4K2P", order: 1
+        )
+        let trip = Trip.make(title: "Chicago Connection", segments: [inbound, outbound])
+
+        // Inbound: running 55 minutes late, landing at Terminal 1 / Gate B8.
+        let inboundStatus = FlightStatusRecord(segmentID: inbound.id)
+        inboundStatus.statusRaw = FlightPhase.scheduled.rawValue
+        inboundStatus.flightIata = "UA355"
+        inboundStatus.airlineName = "United"
+        inboundStatus.depScheduled = inbound.departureDate
+        inboundStatus.depTerminal = "3"
+        inboundStatus.depGate = "G8"
+        inboundStatus.depTimeZoneID = origin.timeZoneIdentifier
+        inboundStatus.arrTimeZoneID = hub.timeZoneIdentifier
+        inboundStatus.arrScheduled = inbound.arrivalDate
+        inboundStatus.arrEstimated = hours(6).addingTimeInterval(minutes(55))
+        inboundStatus.arrDelayMinutes = 55
+        inboundStatus.arrTerminal = "1"
+        inboundStatus.arrGate = "B8"
+
+        // Outbound: on time out of Terminal 2 / Gate E5 — a terminal change.
+        let outboundStatus = FlightStatusRecord(segmentID: outbound.id)
+        outboundStatus.statusRaw = FlightPhase.scheduled.rawValue
+        outboundStatus.flightIata = "UA1290"
+        outboundStatus.airlineName = "United"
+        outboundStatus.depScheduled = outbound.departureDate
+        outboundStatus.depTerminal = "2"
+        outboundStatus.depGate = "E5"
+        outboundStatus.depTimeZoneID = hub.timeZoneIdentifier
+        outboundStatus.arrTimeZoneID = destination.timeZoneIdentifier
+        outboundStatus.arrScheduled = outbound.arrivalDate
+
+        return (trip, [inboundStatus, outboundStatus])
+    }
 }
 
 #if DEBUG
@@ -80,19 +145,36 @@ extension Trip {
         ])
     }
 
-    static var allSamples: [Trip] {
-        [sampleFlight, sampleTrain, sampleRoadTrip, sampleMultiModal, samplePastFlight, samplePastRoadTrip]
+    /// A tight SFO → ORD → JFK connection. Shared (not rebuilt per access) so the
+    /// seeded records in `PreviewData.container`, keyed by segment id, keep matching.
+    @MainActor static var sampleConnection: Trip { PreviewData.connection.trip }
+
+    /// The live snapshots that make `sampleConnection` read as "At risk".
+    @MainActor static var sampleConnectionRecords: [FlightStatusRecord] { PreviewData.connection.records }
+
+    @MainActor static var allSamples: [Trip] {
+        [sampleFlight, sampleTrain, sampleRoadTrip, sampleMultiModal,
+         sampleConnection, samplePastFlight, samplePastRoadTrip]
     }
 }
 
 /// An in-memory container preloaded with samples, for SwiftUI previews.
 @MainActor
 enum PreviewData {
+    static let connection = Trip.makeSampleConnection(
+        origin: .sfo, connectingAt: .ord, destination: .jfk
+    )
+
     static let container: ModelContainer = {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
-        let container = try! ModelContainer(for: Trip.self, TripSegment.self, configurations: config)
+        let container = try! ModelContainer(
+            for: Trip.self, TripSegment.self, FlightStatusRecord.self, configurations: config
+        )
         for trip in Trip.allSamples {
             container.mainContext.insert(trip)
+        }
+        for record in Trip.sampleConnectionRecords {
+            container.mainContext.insert(record)
         }
         return container
     }()

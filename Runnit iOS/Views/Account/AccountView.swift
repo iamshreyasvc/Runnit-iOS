@@ -10,7 +10,6 @@ import SwiftData
 
 struct AccountView: View {
     @Query private var allTrips: [Trip]
-    @Environment(APIUsageTracker.self) private var usage
 
     @AppStorage(PrefKey.appearance) private var appearanceRaw = AppAppearance.dark.rawValue
     @AppStorage(PrefKey.distanceUnit) private var distanceUnitRaw = DistanceUnit.automatic.rawValue
@@ -132,29 +131,23 @@ struct AccountView: View {
             Divider()
 
             HStack(spacing: 12) {
-                Image(systemName: "chart.bar.fill").foregroundStyle(.blue).frame(width: 26)
-                Text("API calls this month")
-                Spacer()
-                Text("\(usage.used) / \(APIUsageTracker.limit)")
-                    .foregroundStyle(usage.isExhausted ? Color.orange : Color.secondary)
-                    .fontWeight(.medium)
-            }
-
-            HStack(spacing: 12) {
-                Image(systemName: Secrets.hasAviationStackKey ? "key.fill" : "key")
-                    .foregroundStyle(Secrets.hasAviationStackKey ? .green : .orange)
+                Image(systemName: Secrets.hasFlightRadarToken ? "key.fill" : "key")
+                    .foregroundStyle(Secrets.hasFlightRadarToken ? .green : .orange)
                     .frame(width: 26)
-                Text("AviationStack key")
+                Text("Flightradar24 token")
                 Spacer()
-                Text(Secrets.hasAviationStackKey ? "Configured" : "Not set")
-                    .foregroundStyle(Secrets.hasAviationStackKey ? Color.secondary : Color.orange)
+                Text(Secrets.hasFlightRadarToken ? "Configured" : "Not set")
+                    .foregroundStyle(Secrets.hasFlightRadarToken ? Color.secondary : Color.orange)
                     .fontWeight(.medium)
             }
 
-            if !Secrets.hasAviationStackKey {
-                Text("Copy Secrets.example.plist to \u{201C}Runnit iOS/Secrets.plist\u{201D} and paste your key to enable live tracking. Your key is gitignored and never committed.")
+            if !Secrets.hasFlightRadarToken {
+                Text("Copy Secrets.example.plist to \u{201C}Runnit iOS/Secrets.plist\u{201D} and paste your token to enable live tracking. Your token is gitignored and never committed.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+
+            Text("Flightradar24 tracks flights that are airborne or already flown. Gate, terminal, and baggage details aren't part of its data, and upcoming flights only appear once they take off.")
+                .font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
@@ -186,7 +179,6 @@ struct AccountView: View {
 #Preview {
     AccountView()
         .modelContainer(PreviewData.container)
-        .environment(APIUsageTracker())
         .preferredColorScheme(.dark)
 }
 #endif

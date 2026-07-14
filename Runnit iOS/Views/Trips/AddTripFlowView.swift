@@ -13,22 +13,6 @@ import SwiftData
 
 // MARK: - Drafts
 
-/// One leg being entered in the wizard.
-private struct SegmentDraft: Identifiable {
-    let id = UUID()
-    var type: TripType = .flight
-    var origin: Place?
-    var destination: Place?
-    var departureDate = Date()
-    var hasArrival = false
-    var arrivalDate = Date().addingTimeInterval(3 * 3600)
-    var operatorName = ""
-    var vehicleNumber = ""
-    var boardingPoint = ""
-    var seat = ""
-    var confirmation = ""
-}
-
 private enum WizardStep: Hashable {
     // Per-leg questions
     case type, flightLookup, origin, destination, when, carrier, number, details, itinerary
@@ -43,12 +27,12 @@ struct AddTripFlowView: View {
     @Environment(\.dismiss) private var dismiss
 
     /// Legs already committed, in order.
-    @State private var legs: [SegmentDraft] = []
+    @State private var legs: [LegDraft] = []
     /// The leg currently being entered (not yet committed).
-    @State private var draft: SegmentDraft = {
+    @State private var draft: LegDraft = {
         #if DEBUG
         if ProcessInfo.processInfo.environment["ADD_DEMO_ROADTRIP"] == "1" {
-            var d = SegmentDraft()
+            var d = LegDraft()
             d.type = .roadTrip
             d.origin = Place(name: "San Francisco", subtitle: "California",
                              latitude: 37.7749, longitude: -122.4194,
@@ -59,7 +43,7 @@ struct AddTripFlowView: View {
             return d
         }
         #endif
-        return SegmentDraft()
+        return LegDraft()
     }()
 
     @State private var title = ""
@@ -109,7 +93,11 @@ struct AddTripFlowView: View {
     private var canGoBack: Bool { index > 0 || finishing || !legs.isEmpty }
 
     /// The full itinerary so far, including the in-progress leg.
-    private var itinerary: [SegmentDraft] { legs + [draft] }
+    private var itinerary: [LegDraft] { legs + [draft] }
+
+    /// A comfortable default gap when chaining a new leg onto the last one — well
+    /// clear of the 45 minutes a connection needs, and easy to shorten.
+    private static let defaultLayover: TimeInterval = 2 * 3600
 
     var body: some View {
         ZStack {
@@ -359,11 +347,19 @@ struct AddTripFlowView: View {
 
     private var whenInput: some View {
         VStack(spacing: 16) {
+            // Picked on the departure airport's clock, not the phone's.
             DatePicker("Departure", selection: $draft.departureDate)
                 .datePickerStyle(.graphical)
                 .tint(accent)
+                .environment(\.calendar, calendar(in: draft.origin?.timeZone))
                 .padding()
                 .glassEffect(.regular, in: .rect(cornerRadius: 22))
+            if let zone = draft.origin?.timeZone,
+               let abbreviation = Format.zone(zone, at: draft.departureDate) {
+                Text("Times in \(abbreviation) — local at \(draft.origin?.displayName ?? "departure")")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             if draft.type == .roadTrip {
                 roadTripETACard
@@ -373,6 +369,7 @@ struct AddTripFlowView: View {
                     .glassEffect(.regular, in: .rect(cornerRadius: 18))
                 if draft.hasArrival {
                     DatePicker("Arrival", selection: $draft.arrivalDate, in: draft.departureDate...)
+                        .environment(\.calendar, calendar(in: draft.destination?.timeZone))
                         .padding()
                         .glassEffect(.regular, in: .rect(cornerRadius: 18))
                 }
@@ -380,6 +377,13 @@ struct AddTripFlowView: View {
         }
         .task(id: routeKey) { await estimateDriveIfNeeded() }
         .onChange(of: draft.departureDate) { _, _ in applyRoadTripArrival() }
+    }
+
+    /// A calendar pinned to `zone`, so DatePicker reads and writes that clock.
+    private func calendar(in zone: TimeZone?) -> Calendar {
+        var cal = Calendar.current
+        if let zone { cal.timeZone = zone }
+        return cal
     }
 
     private var routeKey: String {
@@ -400,7 +404,7 @@ struct AddTripFlowView: View {
                     Image(systemName: "car.fill").font(.title3).foregroundStyle(accent)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(Format.duration(dt)) drive").font(.headline)
-                        Text("Arriving ~ \(Format.dateTime(draft.departureDate.addingTimeInterval(dt)))")
+                        Text("Arriving ~ \(Format.dateTime(draft.departureDate.addingTimeInterval(dt), in: draft.destination?.timeZone))")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -506,8 +510,16 @@ struct AddTripFlowView: View {
                 Text([draft.operatorName, draft.vehicleNumber].filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Text("Departs \(Format.dateTime(draft.departureDate))")
+            // On the departure airport's clock — the time printed on the ticket.
+            Text("Departs \(Format.dateTime(draft.departureDate, in: draft.origin?.timeZone))")
                 .font(.caption).foregroundStyle(.secondary)
+            if let shift = Format.zoneShift(
+                from: draft.origin?.timeZone, to: draft.destination?.timeZone,
+                departing: draft.departureDate,
+                arriving: draft.hasArrival ? draft.arrivalDate : draft.departureDate
+            ) {
+                Text(shift).font(.caption2).foregroundStyle(.tertiary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
@@ -557,6 +569,12 @@ struct AddTripFlowView: View {
             VStack(spacing: 10) {
                 ForEach(Array(itinerary.enumerated()), id: \.element.id) { idx, leg in
                     legRow(index: idx, leg: leg)
+                    // Two flights meeting at one airport aren't two separate legs to
+                    // the traveler — they're a connection, with a layover to judge.
+                    if let connection = itinerary.connection(after: leg) {
+                        ConnectionStrip(connection: connection)
+                            .padding(.leading, 6)
+                    }
                 }
             }
             .padding()
@@ -586,11 +604,11 @@ struct AddTripFlowView: View {
         }
     }
 
-    private func legRow(index: Int, leg: SegmentDraft) -> some View {
+    private func legRow(index: Int, leg: LegDraft) -> some View {
         HStack(spacing: 14) {
             modeIcon(leg.type, size: 40)
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(leg.type.label) · \(Format.date(leg.departureDate))")
+                Text("\(leg.type.label) · \(Format.date(leg.departureDate, in: leg.origin?.timeZone))")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Text("\(leg.origin?.displayName ?? "—") → \(leg.destination?.displayName ?? "—")")
@@ -624,6 +642,10 @@ struct AddTripFlowView: View {
         VStack(spacing: 14) {
             ForEach(Array(legs.enumerated()), id: \.element.id) { idx, leg in
                 legRow(index: idx, leg: leg)
+                if let connection = legs.connection(after: leg) {
+                    ConnectionStrip(connection: connection)
+                        .padding(.leading, 6)
+                }
                 if idx < legs.count - 1 { Divider() }
             }
             if !title.isEmpty {
@@ -687,9 +709,13 @@ struct AddTripFlowView: View {
     /// and loop back to the mode question for a new leg.
     private func addAnotherLeg() {
         legs.append(draft)
-        var nextLeg = SegmentDraft()
+        var nextLeg = LegDraft()
+        nextLeg.type = draft.type
         nextLeg.origin = draft.destination
-        nextLeg.departureDate = draft.arrivalDate
+        // Start the next leg after the last one actually ends, plus a workable gap
+        // — departing at the exact moment you land is a connection you'd miss.
+        let previousEnd = draft.hasArrival ? draft.arrivalDate : draft.departureDate
+        nextLeg.departureDate = previousEnd.addingTimeInterval(Self.defaultLayover)
         draft = nextLeg
         driveTime = nil
         resetLookupState()
@@ -779,10 +805,8 @@ struct PlanBackground: View {
 
 #if DEBUG
 #Preview {
-    let usage = APIUsageTracker()
-    return AddTripFlowView()
+    AddTripFlowView()
         .modelContainer(PreviewData.container)
-        .environment(usage)
-        .environment(FlightTracker(usage: usage))
+        .environment(FlightTracker())
 }
 #endif

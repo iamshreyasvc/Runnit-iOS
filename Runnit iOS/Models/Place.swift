@@ -20,6 +20,12 @@ nonisolated struct Place: Codable, Hashable, Identifiable {
     var isoCountryCode: String?
     var country: String?
     var locality: String?
+    /// IANA id of this place's timezone, e.g. "America/New_York". Resolved once
+    /// (reverse geocode, or the aviation API) so times can always be shown on the
+    /// clock people actually read them on — the one at the airport.
+    /// Optional, and decoded with `decodeIfPresent`, so places stored before this
+    /// existed keep loading.
+    var timeZoneIdentifier: String?
 
     init(
         id: UUID = UUID(),
@@ -29,7 +35,8 @@ nonisolated struct Place: Codable, Hashable, Identifiable {
         longitude: Double,
         isoCountryCode: String? = nil,
         country: String? = nil,
-        locality: String? = nil
+        locality: String? = nil,
+        timeZoneIdentifier: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -39,7 +46,11 @@ nonisolated struct Place: Codable, Hashable, Identifiable {
         self.isoCountryCode = isoCountryCode
         self.country = country
         self.locality = locality
+        self.timeZoneIdentifier = timeZoneIdentifier
     }
+
+    /// The clock at this place, when known.
+    var timeZone: TimeZone? { timeZoneIdentifier.flatMap(TimeZone.init(identifier:)) }
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -81,6 +92,7 @@ extension Place {
             copy.isoCountryCode = mark.isoCountryCode ?? copy.isoCountryCode
             copy.country = mark.country ?? copy.country
             copy.locality = mark.locality ?? mark.administrativeArea ?? copy.locality
+            copy.timeZoneIdentifier = mark.timeZone?.identifier ?? copy.timeZoneIdentifier
             return copy
         } catch {
             return self
@@ -92,21 +104,31 @@ extension Place {
 extension Place {
     static let sfo = Place(name: "San Francisco Intl (SFO)", subtitle: "San Francisco, CA",
                            latitude: 37.6213, longitude: -122.3790,
-                           isoCountryCode: "US", country: "United States", locality: "San Francisco")
+                           isoCountryCode: "US", country: "United States", locality: "San Francisco",
+                           timeZoneIdentifier: "America/Los_Angeles")
     static let jfk = Place(name: "John F. Kennedy Intl (JFK)", subtitle: "New York, NY",
                            latitude: 40.6413, longitude: -73.7781,
-                           isoCountryCode: "US", country: "United States", locality: "New York")
+                           isoCountryCode: "US", country: "United States", locality: "New York",
+                           timeZoneIdentifier: "America/New_York")
+    static let ord = Place(name: "Chicago O'Hare (ORD)", subtitle: "Chicago, IL",
+                           latitude: 41.9742, longitude: -87.9073,
+                           isoCountryCode: "US", country: "United States", locality: "Chicago",
+                           timeZoneIdentifier: "America/Chicago")
     static let lhr = Place(name: "Heathrow (LHR)", subtitle: "London, UK",
                            latitude: 51.4700, longitude: -0.4543,
-                           isoCountryCode: "GB", country: "United Kingdom", locality: "London")
+                           isoCountryCode: "GB", country: "United Kingdom", locality: "London",
+                           timeZoneIdentifier: "Europe/London")
     static let paris = Place(name: "Gare du Nord", subtitle: "Paris, France",
                              latitude: 48.8809, longitude: 2.3553,
-                             isoCountryCode: "FR", country: "France", locality: "Paris")
+                             isoCountryCode: "FR", country: "France", locality: "Paris",
+                             timeZoneIdentifier: "Europe/Paris")
     static let yosemite = Place(name: "Yosemite National Park", subtitle: "California",
                                 latitude: 37.8651, longitude: -119.5383,
-                                isoCountryCode: "US", country: "United States", locality: "Yosemite Valley")
+                                isoCountryCode: "US", country: "United States", locality: "Yosemite Valley",
+                                timeZoneIdentifier: "America/Los_Angeles")
     static let bigSur = Place(name: "Big Sur", subtitle: "California",
                               latitude: 36.2704, longitude: -121.8081,
-                              isoCountryCode: "US", country: "United States", locality: "Big Sur")
+                              isoCountryCode: "US", country: "United States", locality: "Big Sur",
+                              timeZoneIdentifier: "America/Los_Angeles")
 }
 #endif

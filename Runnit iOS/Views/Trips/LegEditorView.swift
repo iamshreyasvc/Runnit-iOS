@@ -53,6 +53,41 @@ struct LegDraft: Identifiable, Hashable {
     var routeSummary: String {
         "\(origin?.displayName ?? "—") → \(destination?.displayName ?? "—")"
     }
+
+    /// An unsaved TripSegment mirroring this draft. Connection logic speaks
+    /// TripSegment, so this lets the editors judge an itinerary while it's still
+    /// being typed — before anything is written to the store. Carries the draft's
+    /// `id` so a resulting Connection can be traced back to the row it came from.
+    var previewSegment: TripSegment? {
+        guard let origin, let destination else { return nil }
+        return TripSegment(
+            id: id, type: type, origin: origin, destination: destination,
+            departureDate: departureDate,
+            arrivalDate: hasArrival ? arrivalDate : nil,
+            operatorName: operatorName.isEmpty ? nil : operatorName,
+            vehicleNumber: vehicleNumber.isEmpty ? nil : vehicleNumber,
+            boardingPoint: boardingPoint.isEmpty ? nil : boardingPoint
+        )
+    }
+}
+
+extension Array where Element == LegDraft {
+    /// The connections these legs imply, as planned. Only consecutive *complete*
+    /// drafts can pair — an unfinished leg in between must not make its neighbors
+    /// look adjacent.
+    var draftConnections: [Connection] {
+        let segments = map(\.previewSegment)
+        return (0..<Swift.max(count - 1, 0)).compactMap { i in
+            guard let inbound = segments[i], let outbound = segments[i + 1],
+                  Connection.isConnection(inbound: inbound, outbound: outbound) else { return nil }
+            return Connection(inbound: inbound, outbound: outbound)
+        }
+    }
+
+    /// The connection that follows `draft`, if it's the inbound half of one.
+    func connection(after draft: LegDraft) -> Connection? {
+        draftConnections.first { $0.inbound.id == draft.id }
+    }
 }
 
 /// A modal editor for a single leg. Calls `onSave` with the result.
@@ -168,16 +203,48 @@ struct LegEditorView: View {
     private var whenCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("When").font(.headline)
+            // Each end is picked on its own airport's clock: typing 1:15 PM for a
+            // LAX departure must mean 1:15 PM in Los Angeles, wherever you are.
             DatePicker("Departure", selection: $draft.departureDate)
                 .datePickerStyle(.compact)
+                .environment(\.calendar, calendar(in: draft.origin?.timeZone))
+            zoneNote("Departure", draft.origin)
+
             Toggle("Add arrival time", isOn: $draft.hasArrival.animation())
             if draft.hasArrival {
                 DatePicker("Arrival", selection: $draft.arrivalDate, in: draft.departureDate...)
                     .datePickerStyle(.compact)
+                    .environment(\.calendar, calendar(in: draft.destination?.timeZone))
+                zoneNote("Arrival", draft.destination)
+            }
+
+            if let shift = Format.zoneShift(
+                from: draft.origin?.timeZone, to: draft.destination?.timeZone,
+                departing: draft.departureDate,
+                arriving: draft.hasArrival ? draft.arrivalDate : draft.departureDate
+            ) {
+                Label(shift, systemImage: "clock.arrow.2.circlepath")
+                    .font(.caption2).foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
+    }
+
+    /// A calendar pinned to `zone`, so DatePicker reads and writes that clock.
+    private func calendar(in zone: TimeZone?) -> Calendar {
+        var cal = Calendar.current
+        if let zone { cal.timeZone = zone }
+        return cal
+    }
+
+    @ViewBuilder
+    private func zoneNote(_ label: String, _ place: Place?) -> some View {
+        if let place, let zone = place.timeZone,
+           let abbreviation = Format.zone(zone, at: draft.departureDate) {
+            Text("\(label) in \(abbreviation) — local at \(place.displayName)")
+                .font(.caption2).foregroundStyle(.tertiary)
+        }
     }
 
     // MARK: Details
@@ -269,9 +336,7 @@ struct LegEditorView: View {
 
 #if DEBUG
 #Preview {
-    let usage = APIUsageTracker()
-    return LegEditorView(titleText: "Edit Leg", draft: LegDraft()) { _ in }
-        .environment(usage)
-        .environment(FlightTracker(usage: usage))
+    LegEditorView(titleText: "Edit Leg", draft: LegDraft()) { _ in }
+        .environment(FlightTracker())
 }
 #endif

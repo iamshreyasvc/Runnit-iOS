@@ -11,7 +11,6 @@ import SwiftData
 @main
 struct Runnit_iOSApp: App {
     let container: ModelContainer
-    @State private var usage: APIUsageTracker
     @State private var flightTracker: FlightTracker
 
     init() {
@@ -22,16 +21,14 @@ struct Runnit_iOSApp: App {
         }
         SampleSeeder.seedIfNeeded(container.mainContext)
         SampleSeeder.backfillSegmentsIfNeeded(container.mainContext)
+        SampleSeeder.seedConnectionIfNeeded(container.mainContext)
 
-        let usage = APIUsageTracker()
-        _usage = State(initialValue: usage)
-        _flightTracker = State(initialValue: FlightTracker(usage: usage))
+        _flightTracker = State(initialValue: FlightTracker())
     }
 
     var body: some Scene {
         WindowGroup {
             RootTabView()
-                .environment(usage)
                 .environment(flightTracker)
         }
         .modelContainer(container)
@@ -42,6 +39,7 @@ struct Runnit_iOSApp: App {
 enum SampleSeeder {
     private static let didSeedKey = "runnit.didSeedSamples.v1"
     private static let didBackfillKey = "runnit.didBackfillSegments.v1"
+    private static let didSeedConnectionKey = "runnit.didSeedConnection.v1"
 
     @MainActor
     static func seedIfNeeded(_ context: ModelContext) {
@@ -57,6 +55,37 @@ enum SampleSeeder {
             try? context.save()
         }
         defaults.set(true, forKey: didSeedKey)
+    }
+
+    /// Additive one-time step: add the sample connecting trip (and the live
+    /// snapshots that make its risk visible). Separate from `seedIfNeeded` and
+    /// keyed on its own flag, because installs seeded before connections existed
+    /// have already tripped that flag and would otherwise never see this trip.
+    @MainActor
+    static func seedConnectionIfNeeded(_ context: ModelContext) {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: didSeedConnectionKey) else { return }
+
+        let ohare = Place(name: "Chicago O'Hare (ORD)", subtitle: "Chicago, IL",
+                          latitude: 41.9742, longitude: -87.9073,
+                          isoCountryCode: "US", country: "United States", locality: "Chicago",
+                          timeZoneIdentifier: "America/Chicago")
+        let sfo = Place(name: "San Francisco Intl (SFO)", subtitle: "San Francisco, CA",
+                        latitude: 37.6213, longitude: -122.3790,
+                        isoCountryCode: "US", country: "United States", locality: "San Francisco",
+                        timeZoneIdentifier: "America/Los_Angeles")
+        let jfk = Place(name: "John F. Kennedy Intl (JFK)", subtitle: "New York, NY",
+                        latitude: 40.6413, longitude: -73.7781,
+                        isoCountryCode: "US", country: "United States", locality: "New York",
+                        timeZoneIdentifier: "America/New_York")
+
+        let sample = Trip.makeSampleConnection(origin: sfo, connectingAt: ohare, destination: jfk)
+        context.insert(sample.trip)
+        for record in sample.records {
+            context.insert(record)
+        }
+        try? context.save()
+        defaults.set(true, forKey: didSeedConnectionKey)
     }
 
     /// One-time upgrade: give any legacy Trip (stored before multi-modal legs
@@ -95,22 +124,28 @@ enum SampleSeeder {
     private static func starterTrips() -> [Trip] {
         let sfo = Place(name: "San Francisco Intl (SFO)", subtitle: "San Francisco, CA",
                         latitude: 37.6213, longitude: -122.3790,
-                        isoCountryCode: "US", country: "United States", locality: "San Francisco")
+                        isoCountryCode: "US", country: "United States", locality: "San Francisco",
+                        timeZoneIdentifier: "America/Los_Angeles")
         let jfk = Place(name: "John F. Kennedy Intl (JFK)", subtitle: "New York, NY",
                         latitude: 40.6413, longitude: -73.7781,
-                        isoCountryCode: "US", country: "United States", locality: "New York")
+                        isoCountryCode: "US", country: "United States", locality: "New York",
+                        timeZoneIdentifier: "America/New_York")
         let lhr = Place(name: "Heathrow (LHR)", subtitle: "London, UK",
                         latitude: 51.4700, longitude: -0.4543,
-                        isoCountryCode: "GB", country: "United Kingdom", locality: "London")
+                        isoCountryCode: "GB", country: "United Kingdom", locality: "London",
+                        timeZoneIdentifier: "Europe/London")
         let bigSur = Place(name: "Big Sur", subtitle: "California",
                            latitude: 36.2704, longitude: -121.8081,
-                           isoCountryCode: "US", country: "United States", locality: "Big Sur")
+                           isoCountryCode: "US", country: "United States", locality: "Big Sur",
+                           timeZoneIdentifier: "America/Los_Angeles")
         let cdg = Place(name: "Paris–Charles de Gaulle (CDG)", subtitle: "Paris, France",
                         latitude: 49.0097, longitude: 2.5479,
-                        isoCountryCode: "FR", country: "France", locality: "Paris")
+                        isoCountryCode: "FR", country: "France", locality: "Paris",
+                        timeZoneIdentifier: "Europe/Paris")
         let hnd = Place(name: "Tokyo Haneda (HND)", subtitle: "Tokyo, Japan",
                         latitude: 35.5494, longitude: 139.7798,
-                        isoCountryCode: "JP", country: "Japan", locality: "Tokyo")
+                        isoCountryCode: "JP", country: "Japan", locality: "Tokyo",
+                        timeZoneIdentifier: "Asia/Tokyo")
 
         func daysFromNow(_ d: Int) -> Date {
             Calendar.current.date(byAdding: .day, value: d, to: Date()) ?? Date()
