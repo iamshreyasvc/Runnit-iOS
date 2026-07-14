@@ -18,6 +18,8 @@ struct TripDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(FlightTracker.self) private var tracker
 
+    @Query private var statusRecords: [FlightStatusRecord]
+
     @State private var showingEdit = false
     @State private var showingDeleteConfirm = false
     @State private var expandedLegs: Set<UUID> = []
@@ -25,11 +27,23 @@ struct TripDetailView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+                // While the trip is underway, "what's happening now" comes first —
+                // ahead of the map, ahead of the itinerary.
+                if isUnderway {
+                    TripStatusCardView(trip: trip)
+                }
+
                 RouteMapView(trip: trip)
                     .frame(height: 220)
                     .clipShape(.rect(cornerRadius: 24))
 
                 summaryCard
+
+                // A connection in trouble outranks everything else on this screen —
+                // unless the live card is already up top saying exactly that.
+                if !isUnderway, let urgent = connections.first(where: { $0.risk.isUrgent }) {
+                    connectionAlert(urgent)
+                }
 
                 // Single-leg flights show the full live status card up front.
                 if !trip.isMultiModal, let seg = trip.displaySegments.first, seg.type == .flight {
@@ -46,7 +60,7 @@ struct TripDetailView: View {
             }
             .padding()
         }
-        .navigationTitle(trip.isMultiModal ? "Trip" : trip.type.label)
+        .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -77,9 +91,19 @@ struct TripDetailView: View {
             }
         }
         .onAppear {
-            // Auto-expand the leg most worth looking at (next/active flight).
+            // Auto-expand the leg most worth looking at (next/active flight)…
             if let seg = primaryFlightSegment { expandedLegs.insert(seg.id) }
+            // …and the flight you're at risk of missing, whose gate you need now.
+            for connection in connections where connection.risk.isUrgent {
+                expandedLegs.insert(connection.outbound.id)
+            }
         }
+    }
+
+    /// Whether the live status card is on screen — it takes over as the trip's
+    /// headline the moment the trip starts happening.
+    private var isUnderway: Bool {
+        TripStatus(trip: trip, records: statusRecords) != nil
     }
 
     /// The flight leg a traveler most likely cares about right now: the next
@@ -87,6 +111,46 @@ struct TripDetailView: View {
     private var primaryFlightSegment: TripSegment? {
         let flights = trip.displaySegments.filter { $0.type == .flight }
         return flights.first { $0.endDate >= Date() } ?? flights.last
+    }
+
+    /// A pure-flight connecting itinerary is a "Connection"; anything else with
+    /// several legs is just a "Trip".
+    private var navigationTitle: String {
+        guard trip.isMultiModal else { return trip.type.label }
+        let allFlights = trip.displaySegments.allSatisfy { $0.type == .flight }
+        return trip.isConnecting && allFlights ? "Connection" : "Trip"
+    }
+
+    // MARK: Connections
+
+    /// Every connection in this trip, resolved against the cached live snapshots.
+    /// Read-only: nothing here ever triggers a fetch.
+    private var connections: [Connection] {
+        trip.connectionPairs.map {
+            Connection(inbound: $0.inbound, outbound: $0.outbound, records: statusRecords)
+        }
+    }
+
+    /// The compact banner for a connection in trouble. The full detail still sits
+    /// in the itinerary between the two legs — this just hoists the verdict.
+    private func connectionAlert(_ connection: Connection) -> some View {
+        let risk = connection.risk
+        return HStack(alignment: .top, spacing: 12) {
+            Image(systemName: risk.systemImage)
+                .font(.headline)
+                .foregroundStyle(risk.color)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(risk.label) at \(connection.airport.displayName)")
+                    .font(.subheadline.weight(.semibold))
+                Text(connection.advisory)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard(tint: risk.color.opacity(0.3))
     }
 
     // MARK: Summary
@@ -103,7 +167,8 @@ struct TripDetailView: View {
                 }
                 Divider()
                 HStack {
-                    Label(Format.dateTime(trip.startDate), systemImage: "calendar")
+                    Label(Format.dateTime(trip.startDate, in: trip.startPlace.timeZone),
+                          systemImage: "calendar")
                         .font(.callout).foregroundStyle(.secondary)
                     Spacer()
                     Text(trip.isPast ? "Completed" : Format.relative(trip.startDate))
@@ -120,6 +185,11 @@ struct TripDetailView: View {
         VStack(spacing: 16) {
             ForEach(Array(trip.displaySegments.enumerated()), id: \.element.id) { idx, segment in
                 legCard(index: idx, segment: segment)
+                // When this leg feeds a connection, the gap to the next leg *is*
+                // the connection — spell it out instead of an empty route line.
+                if let pair = trip.connectionPairs.first(where: { $0.inbound.id == segment.id }) {
+                    ConnectionCardView(inbound: pair.inbound, outbound: pair.outbound)
+                }
             }
         }
     }
@@ -142,10 +212,13 @@ struct TripDetailView: View {
             }
 
             routeEndpoint(icon: "circle.circle", label: "From", place: segment.origin,
-                          time: segment.departureDate, tint: segment.type.accent)
+                          time: segment.departureDate, tint: segment.type.accent,
+                          zone: segment.origin.timeZone)
+            zoneShiftRow(segment)
             Divider()
             routeEndpoint(icon: "mappin.circle.fill", label: "To", place: segment.destination,
-                          time: segment.arrivalDate, tint: segment.type.accent)
+                          time: segment.arrivalDate, tint: segment.type.accent,
+                          zone: segment.destination.timeZone)
 
             if segment.type.isScheduledTransit, hasTransitDetails(segment) {
                 Divider()
@@ -219,15 +292,56 @@ struct TripDetailView: View {
         VStack(spacing: 8) {
             detailRow("Operator", s.operatorName)
             detailRow(s.type.numberLabel, s.vehicleNumber)
-            detailRow(s.type.boardingLabel, s.boardingPoint)
+            boardingRow(s)
             detailRow("Seat", s.seat)
             detailRow("Confirmation", s.confirmation)
         }
     }
 
+    /// Gate / terminal, preferring the airline's live answer over what was typed
+    /// when the trip was created. Gates get reassigned constantly, and a stale
+    /// hand-entered gate is worse than none — but we still show what you entered,
+    /// struck through, so a surprising change is visible rather than silent.
+    @ViewBuilder
+    private func boardingRow(_ s: TripSegment) -> some View {
+        let record = statusRecords.first { $0.segmentID == s.id && $0.isDisplayable(for: s) }
+        if let live = liveBoarding(record) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(s.type.boardingLabel).font(.callout).foregroundStyle(.secondary)
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(live).font(.callout.weight(.medium))
+                        Text("LIVE")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(s.type.accent)
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(s.type.accent.opacity(0.18), in: .capsule)
+                    }
+                    if let entered = s.boardingPoint, !entered.isEmpty, !live.contains(entered) {
+                        Text(entered)
+                            .font(.caption2).foregroundStyle(.secondary).strikethrough()
+                    }
+                }
+            }
+        } else {
+            detailRow(s.type.boardingLabel, s.boardingPoint)
+        }
+    }
+
+    /// "Terminal 3 · Gate 34" from the live snapshot, when it knows either.
+    private func liveBoarding(_ record: FlightStatusRecord?) -> String? {
+        guard let record else { return nil }
+        var parts: [String] = []
+        if let terminal = record.depTerminal { parts.append("Terminal \(terminal)") }
+        if let gate = record.depGate { parts.append("Gate \(gate)") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     // MARK: Building blocks
 
-    private func routeEndpoint(icon: String, label: String, place: Place, time: Date?, tint: Color) -> some View {
+    private func routeEndpoint(icon: String, label: String, place: Place, time: Date?,
+                               tint: Color, zone: TimeZone? = nil) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .foregroundStyle(tint)
@@ -241,8 +355,29 @@ struct TripDetailView: View {
             }
             Spacer()
             if let time {
-                Text(Format.dateTime(time)).font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(Format.dateTime(time, in: zone))
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let label = Format.zone(zone, at: time) {
+                        Text(label).font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
             }
+        }
+    }
+
+    /// The clock change across a leg, spelled out between its endpoints.
+    @ViewBuilder
+    private func zoneShiftRow(_ segment: TripSegment) -> some View {
+        if let shift = Format.zoneShift(
+            from: segment.origin.timeZone, to: segment.destination.timeZone,
+            departing: segment.departureDate,
+            arriving: segment.arrivalDate ?? segment.departureDate
+        ) {
+            Label(shift, systemImage: "clock.arrow.2.circlepath")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -318,10 +453,7 @@ struct RouteMapView: View {
 private extension View {
     /// Injects the flight-tracking environment objects previews need.
     func flightTrackingPreviewEnv() -> some View {
-        let usage = APIUsageTracker()
-        return self
-            .environment(usage)
-            .environment(FlightTracker(usage: usage))
+        environment(FlightTracker())
     }
 }
 
@@ -336,6 +468,14 @@ private extension View {
 #Preview("Multi-modal") {
     NavigationStack {
         TripDetailView(trip: .sampleMultiModal)
+    }
+    .modelContainer(PreviewData.container)
+    .flightTrackingPreviewEnv()
+}
+
+#Preview("Connection") {
+    NavigationStack {
+        TripDetailView(trip: .sampleConnection)
     }
     .modelContainer(PreviewData.container)
     .flightTrackingPreviewEnv()

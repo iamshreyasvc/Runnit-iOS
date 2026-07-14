@@ -23,7 +23,6 @@ enum TripFilter: String, CaseIterable, Identifiable {
 struct TripsListView: View {
     let filter: TripFilter
 
-    @Environment(APIUsageTracker.self) private var usage
     @Query(sort: \Trip.departureDate, order: .forward) private var allTrips: [Trip]
     @State private var showingAdd = false
     @State private var showingFullMap = false
@@ -66,8 +65,13 @@ struct TripsListView: View {
                     emptyState
                 } else {
                     VStack(spacing: 0) {
-                        if usage.isExhausted { QuotaBannerView() }
                         mapHeader
+                        // Only Upcoming can hold a trip that's under way — a trip
+                        // whose last leg has landed has already moved to Past.
+                        // The box shows itself only when there's something live.
+                        if filter == .upcoming {
+                            ActiveTripsBox(trips: shown) { selectedTrip = $0 }
+                        }
                         if years.count > 1 { yearPills }
                         tripList
                     }
@@ -231,10 +235,8 @@ struct TripsListView: View {
 
 #if DEBUG
 #Preview {
-    let usage = APIUsageTracker()
-    return TripsListView(filter: .upcoming)
+    TripsListView(filter: .upcoming)
         .modelContainer(PreviewData.container)
-        .environment(usage)
-        .environment(FlightTracker(usage: usage))
+        .environment(FlightTracker())
 }
 #endif
