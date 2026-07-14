@@ -16,12 +16,11 @@ struct TripDetailView: View {
 
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Environment(FlightTracker.self) private var tracker
 
-    @State private var status: FlightStatus?
     @State private var showingEdit = false
     @State private var showingDeleteConfirm = false
-
-    private let statusProvider: FlightStatusProvider = ManualFlightStatusProvider()
+    @State private var expandedLegs: Set<UUID> = []
 
     var body: some View {
         ScrollView {
@@ -32,8 +31,9 @@ struct TripDetailView: View {
 
                 summaryCard
 
-                if !trip.isMultiModal, trip.type.isScheduledTransit {
-                    statusCard
+                // Single-leg flights show the full live status card up front.
+                if !trip.isMultiModal, let seg = trip.displaySegments.first, seg.type == .flight {
+                    FlightStatusCardView(segment: seg)
                 }
 
                 itinerary
@@ -70,9 +70,23 @@ struct TripDetailView: View {
                 dismiss()
             }
         }
-        .task(id: trip.id) {
-            status = try? await statusProvider.status(for: trip)
+        .refreshable {
+            // Pull-to-refresh spends at most one call: the most relevant flight leg.
+            if let seg = primaryFlightSegment {
+                await tracker.refresh(seg, in: context)
+            }
         }
+        .onAppear {
+            // Auto-expand the leg most worth looking at (next/active flight).
+            if let seg = primaryFlightSegment { expandedLegs.insert(seg.id) }
+        }
+    }
+
+    /// The flight leg a traveler most likely cares about right now: the next
+    /// flight not yet finished, else the last flight in the trip.
+    private var primaryFlightSegment: TripSegment? {
+        let flights = trip.displaySegments.filter { $0.type == .flight }
+        return flights.first { $0.endDate >= Date() } ?? flights.last
     }
 
     // MARK: Summary
@@ -95,23 +109,6 @@ struct TripDetailView: View {
                     Text(trip.isPast ? "Completed" : Format.relative(trip.startDate))
                         .font(.callout.weight(.medium))
                         .foregroundStyle(trip.isPast ? .secondary : trip.type.accent)
-                }
-            }
-        }
-    }
-
-    private var statusCard: some View {
-        infoCard(title: "Status") {
-            HStack {
-                Text(status?.state.rawValue ?? "—")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(trip.type.accent)
-                Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("Departs")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text(Format.dateTime(trip.startDate))
-                        .font(.callout.weight(.medium))
                 }
             }
         }
@@ -155,6 +152,13 @@ struct TripDetailView: View {
                 transitDetails(segment)
             }
 
+            // Multi-leg flights keep live status behind a disclosure so the
+            // itinerary stays scannable; single-leg flights show it up top.
+            if trip.isMultiModal, segment.type == .flight {
+                Divider()
+                flightDisclosure(segment)
+            }
+
             HStack {
                 Label("Distance", systemImage: "ruler")
                     .font(.caption).foregroundStyle(.secondary)
@@ -168,6 +172,29 @@ struct TripDetailView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(tint: segment.type.accent.opacity(0.22))
+    }
+
+    private func flightDisclosure(_ segment: TripSegment) -> some View {
+        DisclosureGroup(isExpanded: expansionBinding(for: segment.id)) {
+            FlightStatusCardView(segment: segment, embedded: true)
+                .padding(.top, 8)
+        } label: {
+            HStack(spacing: 8) {
+                Text("Flight status").font(.subheadline.weight(.semibold))
+                Spacer()
+                FlightStatusChip(segment: segment)
+            }
+        }
+        .tint(segment.type.accent)
+    }
+
+    private func expansionBinding(for id: UUID) -> Binding<Bool> {
+        Binding(
+            get: { expandedLegs.contains(id) },
+            set: { isOn in
+                if isOn { expandedLegs.insert(id) } else { expandedLegs.remove(id) }
+            }
+        )
     }
 
     private func directionsButton(_ segment: TripSegment) -> some View {
@@ -288,11 +315,22 @@ struct RouteMapView: View {
 }
 
 #if DEBUG
+private extension View {
+    /// Injects the flight-tracking environment objects previews need.
+    func flightTrackingPreviewEnv() -> some View {
+        let usage = APIUsageTracker()
+        return self
+            .environment(usage)
+            .environment(FlightTracker(usage: usage))
+    }
+}
+
 #Preview("Single") {
     NavigationStack {
         TripDetailView(trip: .sampleFlight)
     }
     .modelContainer(PreviewData.container)
+    .flightTrackingPreviewEnv()
 }
 
 #Preview("Multi-modal") {
@@ -300,5 +338,6 @@ struct RouteMapView: View {
         TripDetailView(trip: .sampleMultiModal)
     }
     .modelContainer(PreviewData.container)
+    .flightTrackingPreviewEnv()
 }
 #endif

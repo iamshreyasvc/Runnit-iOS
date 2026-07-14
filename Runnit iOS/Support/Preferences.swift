@@ -14,6 +14,9 @@ enum PrefKey {
     static let appearance = "prefAppearance"
     static let distanceUnit = "prefDistanceUnit"
     static let displayName = "prefDisplayName"
+    /// Smart Auto: allow one automatic flight-status fetch when opening a
+    /// day-of / in-air flight. Off by default to conserve the API budget.
+    static let flightAutoRefresh = "prefFlightAutoRefresh"
 }
 
 enum AppAppearance: String, CaseIterable, Identifiable {

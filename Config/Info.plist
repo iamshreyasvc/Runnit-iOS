@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  AviationStack's free tier serves the API over plain HTTP only (HTTPS is a
+	  paid feature), so we allow an insecure load for that one host. Everything
+	  else stays under the default App Transport Security policy.
+
+	  GENERATE_INFOPLIST_FILE is still YES; Xcode merges the generated keys
+	  (scene manifest, launch screen, orientations, location usage string, etc.)
+	  on top of this file at build time — this file only adds what can't be
+	  expressed as a flat INFOPLIST_KEY_* build setting.
+	-->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>api.aviationstack.com</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+</dict>
+</plist>
