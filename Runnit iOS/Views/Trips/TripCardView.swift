@@ -7,9 +7,22 @@
 //
 
 import SwiftUI
+import SwiftData
 
 struct TripCardView: View {
     let trip: Trip
+
+    /// Cached snapshots for this trip's flight legs only — enough to flag a
+    /// connection in trouble. Cache-only: the list never fetches.
+    @Query private var statusRecords: [FlightStatusRecord]
+
+    init(trip: Trip) {
+        self.trip = trip
+        let ids = trip.displaySegments.filter { $0.type == .flight }.map(\.id)
+        _statusRecords = Query(filter: #Predicate<FlightStatusRecord> {
+            ids.contains($0.segmentID)
+        })
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -30,13 +43,16 @@ struct TripCardView: View {
 
                 Spacer()
 
+                if let risk = urgentRisk {
+                    riskPill(risk)
+                }
                 statusPill
             }
 
             routeRow
 
             HStack {
-                Label(Format.date(trip.startDate), systemImage: "calendar")
+                Label(Format.date(trip.startDate, in: trip.startPlace.timeZone), systemImage: "calendar")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -79,6 +95,7 @@ struct TripCardView: View {
     }
 
     private var subheadline: String? {
+        if let stops = stopsLine { return stops }
         if trip.isMultiModal {
             return trip.modeSequence.map(\.label).joined(separator: " · ")
         }
@@ -86,6 +103,35 @@ struct TripCardView: View {
             return number
         }
         return nil
+    }
+
+    /// "1 stop · ORD" — where a connecting itinerary puts you on the ground.
+    private var stopsLine: String? {
+        let pairs = trip.connectionPairs
+        guard !pairs.isEmpty else { return nil }
+        let count = "\(pairs.count) stop\(pairs.count == 1 ? "" : "s")"
+        let airports = pairs.map { pair in
+            FlightIdentityParser.iataCode(from: pair.outbound.origin)
+                ?? pair.outbound.origin.displayName
+        }
+        return ([count] + airports).joined(separator: " · ")
+    }
+
+    /// The worst connection risk on this trip, when it's bad enough to shout about.
+    private var urgentRisk: ConnectionRisk? {
+        trip.connectionPairs
+            .map { Connection(inbound: $0.inbound, outbound: $0.outbound, records: statusRecords).risk }
+            .first { $0.isUrgent }
+    }
+
+    private func riskPill(_ risk: ConnectionRisk) -> some View {
+        Label(risk.label, systemImage: risk.systemImage)
+            .font(.caption2.weight(.semibold))
+            .labelStyle(.titleAndIcon)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .foregroundStyle(risk.color)
+            .background(risk.color.opacity(0.18), in: .capsule)
     }
 
     private var routeRow: some View {
@@ -124,11 +170,13 @@ struct TripCardView: View {
     ScrollView {
         VStack(spacing: 16) {
             TripCardView(trip: .sampleFlight)
+            TripCardView(trip: .sampleConnection)
             TripCardView(trip: .sampleMultiModal)
             TripCardView(trip: .sampleRoadTrip)
         }
         .padding()
     }
     .background(.blue.opacity(0.1))
+    .modelContainer(PreviewData.container)
 }
 #endif

@@ -14,6 +14,7 @@ struct AccountView: View {
     @AppStorage(PrefKey.appearance) private var appearanceRaw = AppAppearance.dark.rawValue
     @AppStorage(PrefKey.distanceUnit) private var distanceUnitRaw = DistanceUnit.automatic.rawValue
     @AppStorage(PrefKey.displayName) private var displayName = "Traveler"
+    @AppStorage(PrefKey.flightAutoRefresh) private var flightAutoRefresh = false
 
     private var stats: TripStatistics { TripStatistics(trips: allTrips) }
     private var appVersion: String {
@@ -29,6 +30,7 @@ struct AccountView: View {
                         profileHeader
                         lifetimeStats
                         preferencesCard
+                        flightTrackingCard
                         aboutCard
                     }
                     .padding()
@@ -106,6 +108,46 @@ struct AccountView: View {
                 }
                 .pickerStyle(.segmented)
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard()
+    }
+
+    // MARK: Flight tracking
+
+    private var flightTrackingCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Flight Tracking").font(.headline)
+
+            Toggle(isOn: $flightAutoRefresh) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Smart Auto-refresh")
+                    Text("Auto-update a flight once when you open it on the day of travel or while it's airborne. Off keeps every update manual.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .tint(.blue)
+
+            Divider()
+
+            HStack(spacing: 12) {
+                Image(systemName: Secrets.hasFlightRadarToken ? "key.fill" : "key")
+                    .foregroundStyle(Secrets.hasFlightRadarToken ? .green : .orange)
+                    .frame(width: 26)
+                Text("Flightradar24 token")
+                Spacer()
+                Text(Secrets.hasFlightRadarToken ? "Configured" : "Not set")
+                    .foregroundStyle(Secrets.hasFlightRadarToken ? Color.secondary : Color.orange)
+                    .fontWeight(.medium)
+            }
+
+            if !Secrets.hasFlightRadarToken {
+                Text("Copy Secrets.example.plist to \u{201C}Runnit iOS/Secrets.plist\u{201D} and paste your token to enable live tracking. Your token is gitignored and never committed.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Text("Flightradar24 tracks flights that are airborne or already flown. Gate, terminal, and baggage details aren't part of its data, and upcoming flights only appear once they take off.")
+                .font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()

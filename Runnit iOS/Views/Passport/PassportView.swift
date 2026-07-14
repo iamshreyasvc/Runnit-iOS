@@ -102,12 +102,12 @@ struct PassportView: View {
                 if let first = stats.firstTrip {
                     highlightRow(icon: "flag.checkered", tint: .purple,
                                  title: "First trip",
-                                 detail: "\(first.displayTitle) · \(Format.date(first.departureDate))")
+                                 detail: "\(first.displayTitle) · \(Format.date(first.departureDate, in: first.startPlace.timeZone))")
                 }
                 if let recent = stats.mostRecentTrip {
                     highlightRow(icon: "clock.fill", tint: .teal,
                                  title: "Most recent",
-                                 detail: "\(recent.displayTitle) · \(Format.date(recent.departureDate))")
+                                 detail: "\(recent.displayTitle) · \(Format.date(recent.departureDate, in: recent.startPlace.timeZone))")
                 }
             }
             .glassCard()

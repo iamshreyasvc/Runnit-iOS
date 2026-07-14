@@ -50,11 +50,43 @@ final class LocationSearchService: NSObject, MKLocalSearchCompleterDelegate {
                 longitude: coordinate.longitude,
                 isoCountryCode: item.placemark.isoCountryCode,
                 country: item.placemark.country,
-                locality: item.placemark.locality ?? item.placemark.administrativeArea
+                locality: item.placemark.locality ?? item.placemark.administrativeArea,
+                timeZoneIdentifier: item.timeZone?.identifier
             )
         } catch {
             return nil
         }
+    }
+
+    /// Resolve an airport (by name and/or IATA) into a Place with coordinates,
+    /// using Apple's local search (free — no aviation-API cost). The returned
+    /// Place embeds the IATA in its name, matching the app's convention.
+    func resolveAirport(name: String?, iata: String?) async -> Place? {
+        let queryName = name?.trimmingCharacters(in: .whitespaces)
+        let terms = [queryName, iata].compactMap { $0 }.filter { !$0.isEmpty }
+        guard !terms.isEmpty else { return nil }
+
+        let request = MKLocalSearch.Request()
+        // "<airport name> airport" reliably resolves the airport POI.
+        request.naturalLanguageQuery = (queryName.map { "\($0) airport" }) ?? "\(iata!) airport"
+        request.resultTypes = [.pointOfInterest, .address]
+
+        guard let response = try? await MKLocalSearch(request: request).start(),
+              let item = response.mapItems.first else { return nil }
+
+        let coordinate = item.placemark.coordinate
+        let base = queryName ?? item.name ?? (iata ?? "Airport")
+        let displayName = iata.map { "\(base) (\($0))" } ?? base
+        return Place(
+            name: displayName,
+            subtitle: item.placemark.locality ?? item.placemark.administrativeArea ?? "",
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            isoCountryCode: item.placemark.isoCountryCode,
+            country: item.placemark.country,
+            locality: item.placemark.locality ?? item.placemark.administrativeArea,
+            timeZoneIdentifier: item.timeZone?.identifier
+        )
     }
 
     // MARK: MKLocalSearchCompleterDelegate

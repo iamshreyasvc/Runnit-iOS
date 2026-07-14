@@ -13,25 +13,9 @@ import SwiftData
 
 // MARK: - Drafts
 
-/// One leg being entered in the wizard.
-private struct SegmentDraft: Identifiable {
-    let id = UUID()
-    var type: TripType = .flight
-    var origin: Place?
-    var destination: Place?
-    var departureDate = Date()
-    var hasArrival = false
-    var arrivalDate = Date().addingTimeInterval(3 * 3600)
-    var operatorName = ""
-    var vehicleNumber = ""
-    var boardingPoint = ""
-    var seat = ""
-    var confirmation = ""
-}
-
 private enum WizardStep: Hashable {
     // Per-leg questions
-    case type, origin, destination, when, carrier, number, details, itinerary
+    case type, flightLookup, origin, destination, when, carrier, number, details, itinerary
     // Trip-level finish
     case name, notes, review
 }
@@ -43,12 +27,12 @@ struct AddTripFlowView: View {
     @Environment(\.dismiss) private var dismiss
 
     /// Legs already committed, in order.
-    @State private var legs: [SegmentDraft] = []
+    @State private var legs: [LegDraft] = []
     /// The leg currently being entered (not yet committed).
-    @State private var draft: SegmentDraft = {
+    @State private var draft: LegDraft = {
         #if DEBUG
         if ProcessInfo.processInfo.environment["ADD_DEMO_ROADTRIP"] == "1" {
-            var d = SegmentDraft()
+            var d = LegDraft()
             d.type = .roadTrip
             d.origin = Place(name: "San Francisco", subtitle: "California",
                              latitude: 37.7749, longitude: -122.4194,
@@ -59,7 +43,7 @@ struct AddTripFlowView: View {
             return d
         }
         #endif
-        return SegmentDraft()
+        return LegDraft()
     }()
 
     @State private var title = ""
@@ -78,13 +62,24 @@ struct AddTripFlowView: View {
     @State private var driveTime: TimeInterval?
     @State private var estimating = false
 
+    // Flight auto-fill
+    @Environment(FlightTracker.self) private var tracker
+    @State private var lookupNumber = ""
+    @State private var lookingUp = false
+    @State private var lookupMessage: String?
+    @State private var lookupApplied = false
+
     @AppStorage(PrefKey.appearance) private var appearanceRaw = AppAppearance.dark.rawValue
 
     private var steps: [WizardStep] {
         if finishing {
             return [.name, .notes, .review]
         }
-        var s: [WizardStep] = [.type, .origin, .destination, .when]
+        var s: [WizardStep] = [.type]
+        // Flights start with a number+date lookup that can auto-fill the rest;
+        // the manual steps stay available behind "Enter details manually".
+        if draft.type == .flight { s += [.flightLookup] }
+        s += [.origin, .destination, .when]
         s += draft.type.isScheduledTransit ? [.carrier, .number, .details] : []
         s += [.itinerary]
         return s
@@ -98,7 +93,11 @@ struct AddTripFlowView: View {
     private var canGoBack: Bool { index > 0 || finishing || !legs.isEmpty }
 
     /// The full itinerary so far, including the in-progress leg.
-    private var itinerary: [SegmentDraft] { legs + [draft] }
+    private var itinerary: [LegDraft] { legs + [draft] }
+
+    /// A comfortable default gap when chaining a new leg onto the last one — well
+    /// clear of the 45 minutes a connection needs, and easy to shorten.
+    private static let defaultLayover: TimeInterval = 2 * 3600
 
     var body: some View {
         ZStack {
@@ -122,26 +121,47 @@ struct AddTripFlowView: View {
     // MARK: Chrome
 
     private var topBar: some View {
-        HStack(spacing: 12) {
-            if canGoBack {
-                Button { back() } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.headline)
-                        .padding(10)
-                        .glassEffect(.regular, in: .circle)
+        VStack(spacing: 12) {
+            HStack {
+                if canGoBack {
+                    Button { back() } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.headline)
+                            .padding(10)
+                            .glassEffect(.regular, in: .circle)
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.opacity)
                 }
-                .buttonStyle(.plain)
-                .transition(.opacity)
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
-
-            ProgressView(value: Double(index + 1), total: Double(steps.count))
-                .tint(accent)
-
-            Button("Cancel") { dismiss() }
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            progressBar
         }
         .padding(.top, 12)
+    }
+
+    /// A slim, inset progress capsule on its own row — clears the sheet's
+    /// rounded corners and never collides with the Cancel button.
+    private var progressBar: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.quaternary)
+                Capsule()
+                    .fill(accent.gradient)
+                    .frame(width: max(6, geo.size.width * progressFraction))
+            }
+        }
+        .frame(height: 5)
+        .animation(.snappy(duration: 0.3), value: progressFraction)
+        .accessibilityLabel("Step \(index + 1) of \(steps.count)")
+    }
+
+    private var progressFraction: Double {
+        guard steps.count > 1 else { return 1 }
+        return Double(index + 1) / Double(steps.count)
     }
 
     @ViewBuilder
@@ -173,9 +193,9 @@ struct AddTripFlowView: View {
 
     @ViewBuilder
     private var footer: some View {
-        // The itinerary step has its own action buttons; every other step gets
-        // a standard Continue / Save.
-        if step != .itinerary {
+        // The itinerary and flight-lookup steps have their own action buttons;
+        // every other step gets a standard Continue / Save.
+        if step != .itinerary && step != .flightLookup {
             Button {
                 isReview ? save() : next()
             } label: {
@@ -191,57 +211,13 @@ struct AddTripFlowView: View {
         }
     }
 
-    // MARK: Copy
-
-    private var legOrdinal: String {
-        let n = legs.count + 1
-        switch n {
-        case 1: return "first"
-        case 2: return "second"
-        case 3: return "third"
-        case 4: return "fourth"
-        default: return "\(n)th"
-        }
-    }
-
-    private var headline: String {
-        switch step {
-        case .type:        return legs.isEmpty ? "Plan a new trip" : "Add another leg"
-        case .origin:      return "Where are you starting?"
-        case .destination: return "And where to?"
-        case .when:        return "When do you leave?"
-        case .carrier:     return draft.type == .flight ? "Which airline?" : "Which operator?"
-        case .number:      return draft.type == .flight ? "Flight number?" : "Train number?"
-        case .details:     return "Any details to add?"
-        case .itinerary:   return "Your itinerary"
-        case .name:        return "Give it a name?"
-        case .notes:       return "Anything to remember?"
-        case .review:      return "Look good?"
-        }
-    }
-
-    private var subhead: String? {
-        switch step {
-        case .type:        return legs.isEmpty ? "Start with your first leg — how are you travelling?" : "How are you travelling this leg?"
-        case .origin:      return legs.isEmpty ? "Search an airport, station, city, or address." : "Starts where your last leg ended — change it if you like."
-        case .destination: return "Where this leg ends."
-        case .when:        return "Pick your departure — add an arrival if you know it."
-        case .carrier:     return "Optional, but nice to have."
-        case .number:      return "So we can find it later. Optional."
-        case .details:     return draft.type == .flight ? "Gate, seat, confirmation…" : "Platform, seat, confirmation…"
-        case .itinerary:   return "Add another leg, or continue to finish."
-        case .name:        return "Optional — a fun title for this trip."
-        case .notes:       return "Optional notes, packing reminders, anything."
-        case .review:      return nil
-        }
-    }
-
     // MARK: Inputs
 
     @ViewBuilder
     private var input: some View {
         switch step {
         case .type:        typeInput
+        case .flightLookup: flightLookupInput
         case .origin:      placeInput($draft.origin, icon: "location.circle.fill")
         case .destination: placeInput($draft.destination, icon: "mappin.circle.fill")
         case .when:        whenInput
@@ -324,11 +300,19 @@ struct AddTripFlowView: View {
 
     private var whenInput: some View {
         VStack(spacing: 16) {
+            // Picked on the departure airport's clock, not the phone's.
             DatePicker("Departure", selection: $draft.departureDate)
                 .datePickerStyle(.graphical)
                 .tint(accent)
+                .environment(\.calendar, calendar(in: draft.origin?.timeZone))
                 .padding()
                 .glassEffect(.regular, in: .rect(cornerRadius: 22))
+            if let zone = draft.origin?.timeZone,
+               let abbreviation = Format.zone(zone, at: draft.departureDate) {
+                Text("Times in \(abbreviation) — local at \(draft.origin?.displayName ?? "departure")")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             if draft.type == .roadTrip {
                 roadTripETACard
@@ -338,6 +322,7 @@ struct AddTripFlowView: View {
                     .glassEffect(.regular, in: .rect(cornerRadius: 18))
                 if draft.hasArrival {
                     DatePicker("Arrival", selection: $draft.arrivalDate, in: draft.departureDate...)
+                        .environment(\.calendar, calendar(in: draft.destination?.timeZone))
                         .padding()
                         .glassEffect(.regular, in: .rect(cornerRadius: 18))
                 }
@@ -345,6 +330,13 @@ struct AddTripFlowView: View {
         }
         .task(id: routeKey) { await estimateDriveIfNeeded() }
         .onChange(of: draft.departureDate) { _, _ in applyRoadTripArrival() }
+    }
+
+    /// A calendar pinned to `zone`, so DatePicker reads and writes that clock.
+    private func calendar(in zone: TimeZone?) -> Calendar {
+        var cal = Calendar.current
+        if let zone { cal.timeZone = zone }
+        return cal
     }
 
     private var routeKey: String {
@@ -365,7 +357,7 @@ struct AddTripFlowView: View {
                     Image(systemName: "car.fill").font(.title3).foregroundStyle(accent)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(Format.duration(dt)) drive").font(.headline)
-                        Text("Arriving ~ \(Format.dateTime(draft.departureDate.addingTimeInterval(dt)))")
+                        Text("Arriving ~ \(Format.dateTime(draft.departureDate.addingTimeInterval(dt), in: draft.destination?.timeZone))")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -408,6 +400,121 @@ struct AddTripFlowView: View {
         }
     }
 
+    // MARK: Flight lookup step
+
+    @ViewBuilder
+    private var flightLookupInput: some View {
+        VStack(spacing: 16) {
+            bigField($lookupNumber, placeholder: "Flight number (e.g. AA 100)", caps: true)
+
+            DatePicker("Travel date", selection: $draft.departureDate, displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .tint(accent)
+                .padding()
+                .glassEffect(.regular, in: .rect(cornerRadius: 22))
+
+            if lookingUp {
+                HStack(spacing: 10) {
+                    ProgressView().tint(accent)
+                    Text("Looking up your flight…").foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding()
+                .glassEffect(.regular, in: .rect(cornerRadius: 18))
+            } else if lookupApplied {
+                lookupResultCard
+                Button { goToItinerary() } label: {
+                    Text("Continue").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
+                }
+                .buttonStyle(.glassProminent).tint(accent)
+            } else {
+                Button { Task { await runWizardLookup() } } label: {
+                    Label("Look up flight", systemImage: "sparkle.magnifyingglass")
+                        .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
+                }
+                .buttonStyle(.glassProminent).tint(accent)
+                .disabled(lookupNumber.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                if let msg = lookupMessage {
+                    Text(msg).font(.callout).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            Button { next() } label: {
+                Text(lookupApplied ? "Edit details manually" : "Enter details manually")
+                    .font(.subheadline.weight(.medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .padding(.top, 4)
+        }
+    }
+
+    private var lookupResultCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Flight found", systemImage: "checkmark.seal.fill")
+                .font(.headline).foregroundStyle(.green)
+            if let o = draft.origin, let d = draft.destination {
+                Text("\(o.displayName) → \(d.displayName)")
+                    .font(.subheadline.weight(.semibold))
+            }
+            if !draft.operatorName.isEmpty {
+                Text([draft.operatorName, draft.vehicleNumber].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            // On the departure airport's clock — the time printed on the ticket.
+            Text("Departs \(Format.dateTime(draft.departureDate, in: draft.origin?.timeZone))")
+                .font(.caption).foregroundStyle(.secondary)
+            if let shift = Format.zoneShift(
+                from: draft.origin?.timeZone, to: draft.destination?.timeZone,
+                departing: draft.departureDate,
+                arriving: draft.hasArrival ? draft.arrivalDate : draft.departureDate
+            ) {
+                Text(shift).font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(accent.opacity(0.14), in: .rect(cornerRadius: 18))
+    }
+
+    private func runWizardLookup() async {
+        lookingUp = true
+        lookupMessage = nil
+        let outcome = await FlightAutofill.run(flightNumber: lookupNumber, date: draft.departureDate, tracker: tracker)
+        lookingUp = false
+
+        guard case .filled(let f) = outcome else {
+            lookupMessage = outcome.message
+            return
+        }
+        if let o = f.origin { draft.origin = o }
+        if let d = f.destination { draft.destination = d }
+        if !f.airline.isEmpty { draft.operatorName = f.airline }
+        draft.vehicleNumber = f.flightNumber.isEmpty ? lookupNumber : f.flightNumber
+        if let dep = f.departure { draft.departureDate = dep }
+        if let arr = f.arrival { draft.hasArrival = true; draft.arrivalDate = arr }
+
+        if draft.origin != nil, draft.destination != nil {
+            lookupApplied = true
+        } else {
+            lookupMessage = "Found the flight, but couldn't place the airports on the map. Continue manually to set them."
+        }
+    }
+
+    private func goToItinerary() {
+        goingForward = true
+        withAnimation(.snappy) { index = steps.count - 1 }   // itinerary is the last step
+    }
+
+    private func resetLookupState() {
+        lookupNumber = ""
+        lookupMessage = nil
+        lookupApplied = false
+        lookingUp = false
+    }
+
     // MARK: Itinerary step
 
     private var itineraryInput: some View {
@@ -415,6 +522,12 @@ struct AddTripFlowView: View {
             VStack(spacing: 10) {
                 ForEach(Array(itinerary.enumerated()), id: \.element.id) { idx, leg in
                     legRow(index: idx, leg: leg)
+                    // Two flights meeting at one airport aren't two separate legs to
+                    // the traveler — they're a connection, with a layover to judge.
+                    if let connection = itinerary.connection(after: leg) {
+                        ConnectionStrip(connection: connection)
+                            .padding(.leading, 6)
+                    }
                 }
             }
             .padding()
@@ -444,11 +557,11 @@ struct AddTripFlowView: View {
         }
     }
 
-    private func legRow(index: Int, leg: SegmentDraft) -> some View {
+    private func legRow(index: Int, leg: LegDraft) -> some View {
         HStack(spacing: 14) {
             modeIcon(leg.type, size: 40)
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(leg.type.label) · \(Format.date(leg.departureDate))")
+                Text("\(leg.type.label) · \(Format.date(leg.departureDate, in: leg.origin?.timeZone))")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Text("\(leg.origin?.displayName ?? "—") → \(leg.destination?.displayName ?? "—")")
@@ -482,6 +595,10 @@ struct AddTripFlowView: View {
         VStack(spacing: 14) {
             ForEach(Array(legs.enumerated()), id: \.element.id) { idx, leg in
                 legRow(index: idx, leg: leg)
+                if let connection = legs.connection(after: leg) {
+                    ConnectionStrip(connection: connection)
+                        .padding(.leading, 6)
+                }
                 if idx < legs.count - 1 { Divider() }
             }
             if !title.isEmpty {
@@ -545,11 +662,16 @@ struct AddTripFlowView: View {
     /// and loop back to the mode question for a new leg.
     private func addAnotherLeg() {
         legs.append(draft)
-        var nextLeg = SegmentDraft()
+        var nextLeg = LegDraft()
+        nextLeg.type = draft.type
         nextLeg.origin = draft.destination
-        nextLeg.departureDate = draft.arrivalDate
+        // Start the next leg after the last one actually ends, plus a workable gap
+        // — departing at the exact moment you land is a connection you'd miss.
+        let previousEnd = draft.hasArrival ? draft.arrivalDate : draft.departureDate
+        nextLeg.departureDate = previousEnd.addingTimeInterval(Self.defaultLayover)
         draft = nextLeg
         driveTime = nil
+        resetLookupState()
         goingForward = true
         withAnimation(.snappy) { index = 0 }
     }
@@ -561,9 +683,11 @@ struct AddTripFlowView: View {
         goingForward = true
         withAnimation(.snappy) { index = 0 }
     }
+}
 
-    // MARK: Save
+// MARK: - Save
 
+extension AddTripFlowView {
     private func save() {
         guard !legs.isEmpty else { return }
         isSaving = true
@@ -574,8 +698,15 @@ struct AddTripFlowView: View {
             var segments: [TripSegment] = []
             for (i, leg) in capturedLegs.enumerated() {
                 guard var origin = leg.origin, var destination = leg.destination else { continue }
-                if origin.isoCountryCode == nil { origin = await origin.reverseGeocoded() }
-                if destination.isoCountryCode == nil { destination = await destination.reverseGeocoded() }
+                // Resolve country *and* timezone: a MapKit search result carries a
+                // country code but no zone, and arrival times must read on the
+                // destination airport's own clock — the way airlines show them.
+                if origin.isoCountryCode == nil || origin.timeZoneIdentifier == nil {
+                    origin = await origin.reverseGeocoded()
+                }
+                if destination.isoCountryCode == nil || destination.timeZoneIdentifier == nil {
+                    destination = await destination.reverseGeocoded()
+                }
                 segments.append(TripSegment(
                     type: leg.type,
                     origin: origin,
@@ -607,9 +738,59 @@ struct AddTripFlowView: View {
     }
 }
 
+// MARK: - Copy
+
+extension AddTripFlowView {
+    private var legOrdinal: String {
+        let n = legs.count + 1
+        switch n {
+        case 1: return "first"
+        case 2: return "second"
+        case 3: return "third"
+        case 4: return "fourth"
+        default: return "\(n)th"
+        }
+    }
+
+    private var headline: String {
+        switch step {
+        case .type:        return legs.isEmpty ? "Plan a new trip" : "Add another leg"
+        case .flightLookup: return "What's your flight?"
+        case .origin:      return "Where are you starting?"
+        case .destination: return "And where to?"
+        case .when:        return "When do you leave?"
+        case .carrier:     return draft.type == .flight ? "Which airline?" : "Which operator?"
+        case .number:      return draft.type == .flight ? "Flight number?" : "Train number?"
+        case .details:     return "Any details to add?"
+        case .itinerary:   return "Your itinerary"
+        case .name:        return "Give it a name?"
+        case .notes:       return "Anything to remember?"
+        case .review:      return "Look good?"
+        }
+    }
+
+    private var subhead: String? {
+        switch step {
+        case .type:        return legs.isEmpty ? "Start with your first leg — how are you travelling?" : "How are you travelling this leg?"
+        case .flightLookup: return "Enter your flight number and date — we'll fill in the rest."
+        case .origin:      return legs.isEmpty ? "Search an airport, station, city, or address." : "Starts where your last leg ended — change it if you like."
+        case .destination: return "Where this leg ends."
+        case .when:        return "Pick your departure — add an arrival if you know it."
+        case .carrier:     return "Optional, but nice to have."
+        case .number:      return "So we can find it later. Optional."
+        case .details:     return draft.type == .flight ? "Gate, seat, confirmation…" : "Platform, seat, confirmation…"
+        case .itinerary:   return "Add another leg, or continue to finish."
+        case .name:        return "Optional — a fun title for this trip."
+        case .notes:       return "Optional notes, packing reminders, anything."
+        case .review:      return nil
+        }
+    }
+}
+
 /// A calm, near-neutral background for the add-trip flow: a soft base gradient
 /// with a single faint accent glow. Intentionally quieter than `AppBackground`.
-private struct PlanBackground: View {
+/// Shared by the add-trip wizard and the trip/leg editors.
+struct PlanBackground: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -635,5 +816,6 @@ private struct PlanBackground: View {
 #Preview {
     AddTripFlowView()
         .modelContainer(PreviewData.container)
+        .environment(FlightTracker())
 }
 #endif

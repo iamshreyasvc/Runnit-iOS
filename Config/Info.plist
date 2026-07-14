@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Intentionally near-empty. This file used to carry an App Transport Security
+	  exception for api.aviationstack.com, whose free tier was HTTP-only. Live
+	  tracking now runs on Flightradar24 over HTTPS, so the app needs no ATS
+	  exceptions at all and runs under the default policy.
+
+	  GENERATE_INFOPLIST_FILE is still YES; Xcode merges the generated keys (scene
+	  manifest, launch screen, orientations, location usage string, etc.) on top of
+	  this file at build time — this file only adds what can't be expressed as a
+	  flat INFOPLIST_KEY_* build setting. Nothing currently qualifies.
+	-->
+</dict>
+</plist>

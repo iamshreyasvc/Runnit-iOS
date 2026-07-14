@@ -12,6 +12,7 @@ DerivedData/
 # Test / coverage artifacts
 *.xcresult
 
-# Secrets — never commit real API keys.
-Secrets.plist
+# Secrets — real API keys live here and must never be committed.
+# Copy Secrets.example.plist to "Runnit iOS/Secrets.plist" and paste your key.
 Runnit iOS/Secrets.plist
+Secrets.plist

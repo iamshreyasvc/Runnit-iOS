@@ -60,5 +60,6 @@ struct RootTabView: View {
 #Preview {
     RootTabView()
         .modelContainer(PreviewData.container)
+        .environment(FlightTracker())
 }
 #endif

@@ -24,6 +24,7 @@ struct TripsListView: View {
     let filter: TripFilter
 
     @Query(sort: \Trip.departureDate, order: .forward) private var allTrips: [Trip]
+    @Query private var statusRecords: [FlightStatusRecord]
     @State private var showingAdd = false
     @State private var showingFullMap = false
     @State private var selectedTrip: Trip?
@@ -55,6 +56,12 @@ struct TripsListView: View {
     private var displayed: [Trip] {
         guard let year = selectedYear, years.contains(year) else { return shown }
         return shown.filter { Calendar.current.component(.year, from: $0.startDate) == year }
+    }
+
+    /// Whether anything is live right now. Checked here as well as inside the box
+    /// so an inactive box contributes no stack spacing to the list.
+    private var hasActiveTrip: Bool {
+        shown.contains { TripStatus(trip: $0, records: statusRecords) != nil }
     }
 
     var body: some View {
@@ -193,6 +200,14 @@ struct TripsListView: View {
         ScrollView {
             GlassEffectContainer(spacing: 16) {
                 LazyVStack(spacing: 16) {
+                    // Scrolls with the cards rather than sitting above them: a box
+                    // with three live trips in it is taller than the space the list
+                    // can spare, and pinning it would leave nothing to scroll.
+                    // Only Upcoming can hold a trip that's under way — once the last
+                    // leg lands the trip has already moved to Past.
+                    if filter == .upcoming, hasActiveTrip {
+                        ActiveTripsBox(trips: shown) { selectedTrip = $0 }
+                    }
                     ForEach(displayed) { trip in
                         NavigationLink {
                             TripDetailView(trip: trip)
@@ -231,5 +246,6 @@ struct TripsListView: View {
 #Preview {
     TripsListView(filter: .upcoming)
         .modelContainer(PreviewData.container)
+        .environment(FlightTracker())
 }
 #endif
