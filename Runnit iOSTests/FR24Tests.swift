@@ -50,7 +50,7 @@ struct FR24Tests {
 
     @Test func zSuffixedTimestampsParse() throws {
         let parsed = try #require(FR24Date.parse("2023-11-08T10:10:00Z"))
-        #expect(parsed == Date(timeIntervalSince1970: 1_699_437_000))
+        #expect(parsed == Date(timeIntervalSince1970: 1_699_438_200))
     }
 
     /// Both shapes must land on the same scale, or a flight's elapsed time comes

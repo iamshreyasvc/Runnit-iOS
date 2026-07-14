@@ -211,53 +211,6 @@ struct AddTripFlowView: View {
         }
     }
 
-    // MARK: Copy
-
-    private var legOrdinal: String {
-        let n = legs.count + 1
-        switch n {
-        case 1: return "first"
-        case 2: return "second"
-        case 3: return "third"
-        case 4: return "fourth"
-        default: return "\(n)th"
-        }
-    }
-
-    private var headline: String {
-        switch step {
-        case .type:        return legs.isEmpty ? "Plan a new trip" : "Add another leg"
-        case .flightLookup: return "What's your flight?"
-        case .origin:      return "Where are you starting?"
-        case .destination: return "And where to?"
-        case .when:        return "When do you leave?"
-        case .carrier:     return draft.type == .flight ? "Which airline?" : "Which operator?"
-        case .number:      return draft.type == .flight ? "Flight number?" : "Train number?"
-        case .details:     return "Any details to add?"
-        case .itinerary:   return "Your itinerary"
-        case .name:        return "Give it a name?"
-        case .notes:       return "Anything to remember?"
-        case .review:      return "Look good?"
-        }
-    }
-
-    private var subhead: String? {
-        switch step {
-        case .type:        return legs.isEmpty ? "Start with your first leg — how are you travelling?" : "How are you travelling this leg?"
-        case .flightLookup: return "Enter your flight number and date — we'll fill in the rest."
-        case .origin:      return legs.isEmpty ? "Search an airport, station, city, or address." : "Starts where your last leg ended — change it if you like."
-        case .destination: return "Where this leg ends."
-        case .when:        return "Pick your departure — add an arrival if you know it."
-        case .carrier:     return "Optional, but nice to have."
-        case .number:      return "So we can find it later. Optional."
-        case .details:     return draft.type == .flight ? "Gate, seat, confirmation…" : "Platform, seat, confirmation…"
-        case .itinerary:   return "Add another leg, or continue to finish."
-        case .name:        return "Optional — a fun title for this trip."
-        case .notes:       return "Optional notes, packing reminders, anything."
-        case .review:      return nil
-        }
-    }
-
     // MARK: Inputs
 
     @ViewBuilder
@@ -775,6 +728,55 @@ extension AddTripFlowView {
     private func nilIfEmpty(_ s: String) -> String? {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         return t.isEmpty ? nil : t
+    }
+}
+
+// MARK: - Copy
+
+extension AddTripFlowView {
+    private var legOrdinal: String {
+        let n = legs.count + 1
+        switch n {
+        case 1: return "first"
+        case 2: return "second"
+        case 3: return "third"
+        case 4: return "fourth"
+        default: return "\(n)th"
+        }
+    }
+
+    private var headline: String {
+        switch step {
+        case .type:        return legs.isEmpty ? "Plan a new trip" : "Add another leg"
+        case .flightLookup: return "What's your flight?"
+        case .origin:      return "Where are you starting?"
+        case .destination: return "And where to?"
+        case .when:        return "When do you leave?"
+        case .carrier:     return draft.type == .flight ? "Which airline?" : "Which operator?"
+        case .number:      return draft.type == .flight ? "Flight number?" : "Train number?"
+        case .details:     return "Any details to add?"
+        case .itinerary:   return "Your itinerary"
+        case .name:        return "Give it a name?"
+        case .notes:       return "Anything to remember?"
+        case .review:      return "Look good?"
+        }
+    }
+
+    private var subhead: String? {
+        switch step {
+        case .type:        return legs.isEmpty ? "Start with your first leg — how are you travelling?" : "How are you travelling this leg?"
+        case .flightLookup: return "Enter your flight number and date — we'll fill in the rest."
+        case .origin:      return legs.isEmpty ? "Search an airport, station, city, or address." : "Starts where your last leg ended — change it if you like."
+        case .destination: return "Where this leg ends."
+        case .when:        return "Pick your departure — add an arrival if you know it."
+        case .carrier:     return "Optional, but nice to have."
+        case .number:      return "So we can find it later. Optional."
+        case .details:     return draft.type == .flight ? "Gate, seat, confirmation…" : "Platform, seat, confirmation…"
+        case .itinerary:   return "Add another leg, or continue to finish."
+        case .name:        return "Optional — a fun title for this trip."
+        case .notes:       return "Optional notes, packing reminders, anything."
+        case .review:      return nil
+        }
     }
 }
 

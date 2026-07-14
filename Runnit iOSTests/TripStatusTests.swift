@@ -61,7 +61,7 @@ struct TripStatusTests {
         #expect(status?.focusSegment.id == leg.id)
         // Two hours into a four-hour countdown.
         #expect(abs((status?.progress ?? 0) - 0.5) < 0.01)
-        #expect(status?.timeRemaining == 2 * 3600)
+        #expect(status?.timeRemaining == TimeInterval(2 * 3600))
     }
 
     // MARK: In transit
@@ -74,7 +74,7 @@ struct TripStatusTests {
         let status = status(trip)
         #expect(status?.phase == .inTransit(leg))
         #expect(abs((status?.progress ?? 0) - 0.5) < 0.01)
-        #expect(status?.timeRemaining == 3 * 3600)
+        #expect(status?.timeRemaining == TimeInterval(3 * 3600))
     }
 
     @Test("A live delayed arrival pushes the finish line out and reports the delay")
@@ -96,7 +96,7 @@ struct TripStatusTests {
         #expect(status?.delayMinutes == 60)
         // Without the delay we'd be 3/4 through; the late ETA makes it 3/5.
         #expect(abs((status?.progress ?? 0) - 0.6) < 0.01)
-        #expect(status?.timeRemaining == 2 * 3600)
+        #expect(status?.timeRemaining == TimeInterval(2 * 3600))
     }
 
     // MARK: Layovers

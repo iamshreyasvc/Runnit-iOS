@@ -125,7 +125,7 @@ struct ConnectionTests {
         ]
         let connections = legs.draftConnections
         #expect(connections.count == 1)
-        #expect(connections.first?.effectiveLayover == 2 * 3600)
+        #expect(connections.first?.effectiveLayover == TimeInterval(2 * 3600))
         #expect(connections.first?.risk == .comfortable)
         #expect(legs.connection(after: legs[0])?.airport.name == Place.ord.name)
         #expect(legs.connection(after: legs[1]) == nil)
@@ -168,8 +168,8 @@ struct ConnectionTests {
         let outbound = flight(from: .ord, to: .jfk, departs: hours(6), arrives: hours(8))
         let connection = Connection(inbound: inbound, outbound: outbound)
 
-        #expect(connection.scheduledLayover == 2 * 3600)
-        #expect(connection.effectiveLayover == 2 * 3600)
+        #expect(connection.scheduledLayover == TimeInterval(2 * 3600))
+        #expect(connection.effectiveLayover == TimeInterval(2 * 3600))
         #expect(connection.layoverDelta == 0)
         #expect(connection.inboundDelayMinutes == nil)
     }
@@ -183,9 +183,9 @@ struct ConnectionTests {
             outboundStatus: outboundRecord(for: outbound)
         )
 
-        #expect(connection.scheduledLayover == 2 * 3600)
-        #expect(connection.effectiveLayover == 2 * 3600 - 55 * 60)
-        #expect(connection.layoverDelta == -55 * 60)
+        #expect(connection.scheduledLayover == TimeInterval(2 * 3600))
+        #expect(connection.effectiveLayover == TimeInterval(2 * 3600 - 55 * 60))
+        #expect(connection.layoverDelta == TimeInterval(-55 * 60))
         #expect(connection.inboundDelayMinutes == 55)
     }
 
