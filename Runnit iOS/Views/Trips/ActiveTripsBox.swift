@@ -69,7 +69,6 @@ struct ActiveTripsBox: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(tint: (active.first?.status.tint ?? TripType.flight.accent).opacity(0.25))
-        .padding([.horizontal, .top])
     }
 
     private func row(_ trip: Trip, status: TripStatus) -> some View {
