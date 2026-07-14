@@ -698,8 +698,15 @@ extension AddTripFlowView {
             var segments: [TripSegment] = []
             for (i, leg) in capturedLegs.enumerated() {
                 guard var origin = leg.origin, var destination = leg.destination else { continue }
-                if origin.isoCountryCode == nil { origin = await origin.reverseGeocoded() }
-                if destination.isoCountryCode == nil { destination = await destination.reverseGeocoded() }
+                // Resolve country *and* timezone: a MapKit search result carries a
+                // country code but no zone, and arrival times must read on the
+                // destination airport's own clock — the way airlines show them.
+                if origin.isoCountryCode == nil || origin.timeZoneIdentifier == nil {
+                    origin = await origin.reverseGeocoded()
+                }
+                if destination.isoCountryCode == nil || destination.timeZoneIdentifier == nil {
+                    destination = await destination.reverseGeocoded()
+                }
                 segments.append(TripSegment(
                     type: leg.type,
                     origin: origin,

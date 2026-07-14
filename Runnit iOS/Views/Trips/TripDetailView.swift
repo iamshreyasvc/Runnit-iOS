@@ -98,6 +98,27 @@ struct TripDetailView: View {
                 expandedLegs.insert(connection.outbound.id)
             }
         }
+        .task { await backfillTimeZones() }
+    }
+
+    /// Fill in any airport that was saved without a timezone (older trips, or a
+    /// MapKit result that carried no zone). Without this, that airport's times
+    /// fall back to the device clock — so an arrival in Atlanta reads in Pacific
+    /// time. Resolving it once lets every time show on its own airport's clock,
+    /// the way airlines display them. Idempotent: skips places already resolved.
+    private func backfillTimeZones() async {
+        var changed = false
+        for segment in trip.segments {
+            if segment.origin.timeZoneIdentifier == nil {
+                segment.origin = await segment.origin.reverseGeocoded()
+                changed = changed || segment.origin.timeZoneIdentifier != nil
+            }
+            if segment.destination.timeZoneIdentifier == nil {
+                segment.destination = await segment.destination.reverseGeocoded()
+                changed = changed || segment.destination.timeZoneIdentifier != nil
+            }
+        }
+        if changed { try? context.save() }
     }
 
     /// Whether the live status card is on screen — it takes over as the trip's

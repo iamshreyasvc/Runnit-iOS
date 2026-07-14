@@ -50,7 +50,8 @@ final class LocationSearchService: NSObject, MKLocalSearchCompleterDelegate {
                 longitude: coordinate.longitude,
                 isoCountryCode: item.placemark.isoCountryCode,
                 country: item.placemark.country,
-                locality: item.placemark.locality ?? item.placemark.administrativeArea
+                locality: item.placemark.locality ?? item.placemark.administrativeArea,
+                timeZoneIdentifier: item.timeZone?.identifier
             )
         } catch {
             return nil
@@ -83,7 +84,8 @@ final class LocationSearchService: NSObject, MKLocalSearchCompleterDelegate {
             longitude: coordinate.longitude,
             isoCountryCode: item.placemark.isoCountryCode,
             country: item.placemark.country,
-            locality: item.placemark.locality ?? item.placemark.administrativeArea
+            locality: item.placemark.locality ?? item.placemark.administrativeArea,
+            timeZoneIdentifier: item.timeZone?.identifier
         )
     }
 
