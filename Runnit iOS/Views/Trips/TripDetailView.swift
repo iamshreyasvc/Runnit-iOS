@@ -36,7 +36,9 @@ struct TripDetailView: View {
                     .frame(height: 220)
                     .clipShape(.rect(cornerRadius: 24))
 
-                TripOverviewCard(trip: trip)
+                // While underway, the live card above already shows the route and
+                // times, so the overview collapses to just its extra metrics.
+                TripOverviewCard(trip: trip, compact: isUnderway)
 
                 // A connection in trouble outranks everything — unless the live
                 // card up top is already saying exactly that.

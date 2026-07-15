@@ -2,8 +2,9 @@
 //  TripsListView.swift
 //  Runnit iOS
 //
-//  A single filter (Upcoming or Past) as its own tab: an interactive, zoomable
-//  map of that tab's trips on top, with the trip cards scrolling below.
+//  A single filter (Upcoming or Past) as its own tab: a full-bleed interactive
+//  map of that tab's trips as the backdrop, with a glass sheet of trip cards
+//  that slides up over it. Tapping a route or pin previews the trip.
 //
 
 import SwiftUI
@@ -29,10 +30,10 @@ struct TripsListView: View {
     @State private var showingFullMap = false
     @State private var selectedTrip: Trip?
     @State private var mapSelection: PersistentIdentifier?
-    // Drives the collapsing map header: how far the list has scrolled, and the
-    // natural height of the section below the map (measured while expanded).
-    @State private var scrollY: CGFloat = 0
-    @State private var extraHeight: CGFloat = 0
+    // The trip whose route/pin is tapped on the map, shown as a floating preview.
+    @State private var previewTrip: Trip?
+    // Map camera; `.automatic` frames all currently shown trips.
+    @State private var camera: MapCameraPosition = .automatic
     @Namespace private var pillNamespace
     @State private var selectedYear: Int? = {
         #if DEBUG
@@ -70,16 +71,14 @@ struct TripsListView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                AppBackground(accent: filter.accent, secondary: .teal)
+            ZStack(alignment: .top) {
                 if shown.isEmpty {
+                    AppBackground(accent: filter.accent, secondary: .teal)
                     emptyState
                 } else {
-                    VStack(spacing: 0) {
-                        mapHeader
-                        if !years.isEmpty { yearPills }
-                        tripList
-                    }
+                    mapBackground
+                    tripsSheet
+                    mapTopControls
                 }
             }
             .sectionHeader(filter.rawValue, systemImage: filter.symbol, tint: filter.accent,
@@ -117,100 +116,97 @@ struct TripsListView: View {
         }
     }
 
-    // MARK: Map card (interactive + zoomable)
+    // MARK: Map background + sliding trip sheet
 
-    /// Whether the live "Happening Now" section is shown, merged into the map
-    /// card. Only Upcoming can hold a trip that's under way.
+    /// Only Upcoming can hold a trip that's under way.
     private var showsLiveSection: Bool { filter == .upcoming && hasActiveTrip }
 
-    /// How collapsed the header is, 0 (top) → 1 (scrolled past the threshold).
-    /// Drives the map shrinking and the section below folding away, so scrolling
-    /// the list reveals more of it on both tabs.
-    private var collapse: CGFloat {
-        let threshold: CGFloat = 150
-        return min(max(scrollY / threshold, 0), 1)
+    /// The full-bleed map the trip sheet slides up over. Its routes and pins stay
+    /// interactive in the region above the sheet.
+    private var mapBackground: some View {
+        map.ignoresSafeArea()
     }
 
-    /// The map's height for the current collapse state.
-    private var mapHeight: CGFloat {
-        let expanded: CGFloat = showsLiveSection ? 210 : 250
-        let collapsed: CGFloat = 120
-        return expanded - (expanded - collapsed) * collapse
-    }
+    /// A scroll view layered over the map: a transparent peek region keeps the top
+    /// of the map visible and interactive, and the glass sheet of trips slides up
+    /// over it as the list scrolls.
+    private var tripsSheet: some View {
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    // The map shows through here; hit-testing is off so pans and
+                    // taps in this band reach the map, not the scroll view.
+                    Color.clear
+                        .frame(height: proxy.size.height * 0.44)
+                        .allowsHitTesting(false)
 
-    /// The map sits inside a clean, untinted glass card: a titled header, the map
-    /// framed within it, and — when something is live — the "Happening Now"
-    /// section merged in directly below, otherwise a small summary footer. Reads
-    /// as one cohesive unit rather than a slab floating above the list, and
-    /// minimizes as the list scrolls.
-    private var mapHeader: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionTitle(title: mapTitle, systemImage: "map.fill",
-                         tint: filter.accent, accessory: mapAccessory)
-
-            map
-                .frame(height: mapHeight)
-                .clipShape(.rect(cornerRadius: 16))
-                .overlay(alignment: .topTrailing) {
-                    Button {
-                        showingFullMap = true
-                    } label: {
-                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .font(.subheadline.weight(.semibold))
-                            .padding(10)
-                            .glassEffect(.regular, in: .circle)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(10)
+                    sheetBody(minHeight: proxy.size.height * 0.62)
                 }
-                // As the header collapses and the live section folds away, a
-                // compact badge fades in so what's happening now is still visible.
-                .overlay(alignment: .topLeading) {
-                    if collapse > 0, let status = liveStatus {
-                        liveBadge(status)
-                            .opacity(collapse)
-                            .padding(10)
-                    }
-                }
-                .onChange(of: mapSelection) { _, id in
-                    guard let id else { return }
-                    selectedTrip = displayed.first { $0.persistentModelID == id }
-                    mapSelection = nil
-                }
-
-            // The live box / summary folds up and fades as the header collapses.
-            // Its natural height is measured only while expanded, so the collapse
-            // interpolation stays stable.
-            extraSection
-                .background {
-                    GeometryReader { geo in
-                        Color.clear
-                            .onAppear { extraHeight = geo.size.height }
-                            .onChange(of: geo.size.height) { _, h in
-                                if collapse == 0 { extraHeight = h }
-                            }
-                    }
-                }
-                .frame(height: max(0, extraHeight * (1 - collapse)), alignment: .top)
-                .opacity(1 - collapse)
-                .clipped()
+            }
+            .scrollIndicators(.hidden)
         }
-        .glassCard()
-        .padding([.horizontal, .top])
-        .padding(.bottom, 12)
+        .ignoresSafeArea(edges: .bottom)
     }
 
-    /// The content merged in below the map: the live box when something is under
-    /// way, otherwise the small tap-hint + distance summary.
-    @ViewBuilder private var extraSection: some View {
-        if showsLiveSection {
-            ActiveTripsBox(trips: shown, embedded: true) { selectedTrip = $0 }
-        } else {
-            mapSummary
+    private func sheetBody(minHeight: CGFloat) -> some View {
+        VStack(spacing: 16) {
+            Capsule()
+                .fill(.secondary.opacity(0.5))
+                .frame(width: 40, height: 5)
+                .padding(.top, 8)
+
+            if showsLiveSection {
+                ActiveTripsBox(trips: shown) { selectedTrip = $0 }
+            }
+            if !years.isEmpty { yearPills }
+            cardsList
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 48)
+        .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .top)
+        .background {
+            UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30)
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea(edges: .bottom)
+                .shadow(color: .black.opacity(0.18), radius: 14, y: -3)
         }
     }
 
-    /// The most imminent live trip's reading — drives the collapsed-header badge.
+    // MARK: Map controls, live badge, and route preview
+
+    /// Floating controls above the map: the live badge (or a tapped route's
+    /// preview) on the left and the full-screen expand button on the right. Kept
+    /// out of the map's ignored safe area so they clear the navigation bar.
+    private var mapTopControls: some View {
+        VStack(spacing: 8) {
+            HStack(alignment: .top) {
+                if previewTrip == nil, let status = liveStatus {
+                    liveBadge(status)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                Spacer(minLength: 0)
+                Button {
+                    showingFullMap = true
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(12)
+                        .glassEffect(.regular, in: .circle)
+                }
+                .buttonStyle(.plain)
+            }
+            if let trip = previewTrip {
+                routePreview(trip)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .padding(.horizontal)
+        .padding(.top, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .animation(.snappy(duration: 0.3), value: previewTrip?.persistentModelID)
+    }
+
+    /// The most imminent live trip's reading — drives the floating live badge.
     private var liveStatus: TripStatus? {
         guard showsLiveSection else { return nil }
         return shown
@@ -248,56 +244,105 @@ struct TripsListView: View {
         .shadow(color: status.tint.opacity(0.4), radius: 5, y: 2)
     }
 
-    /// The interactive map itself, shared by the card frame above.
+    /// The popup shown when a route or pin is tapped: a glass card summarizing the
+    /// trip, with a button to open its detail.
+    private func routePreview(_ trip: Trip) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: trip.type.symbol)
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(trip.type.gradient, in: .circle)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(trip.displayTitle)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Text("\(trip.startPlace.codeLabel) → \(trip.endPlace.codeLabel) · \(Format.date(trip.startDate, in: trip.startPlace.timeZone))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Button {
+                selectedTrip = trip
+                mapSelection = nil
+            } label: {
+                Text("Open")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(trip.type.accent)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .glassEffect(.regular, in: .capsule)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                mapSelection = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
+    }
+
+    // MARK: Interactive map
+
+    /// Solid, casing-backed route lines per leg and a custom pin at each
+    /// destination. `.automatic` frames all currently shown trips.
     private var map: some View {
-        Map(selection: $mapSelection) {
+        Map(position: $camera, selection: $mapSelection) {
             ForEach(displayed) { trip in
-                // One dashed line per leg, tinted by that leg's mode.
                 ForEach(trip.displaySegments) { segment in
-                    MapPolyline(coordinates: [segment.origin.coordinate, segment.destination.coordinate])
-                        .stroke(segment.type.accent.opacity(0.85),
-                                style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [1, 6]))
+                    let coords = [segment.origin.coordinate, segment.destination.coordinate]
+                    // A darker, wider casing under each solid line reads like a
+                    // navigation route — crisp against land and water alike.
+                    MapPolyline(coordinates: coords)
+                        .stroke(.black.opacity(0.22),
+                                style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
+                    MapPolyline(coordinates: coords)
+                        .stroke(segment.type.gradient,
+                                style: StrokeStyle(lineWidth: 4.5, lineCap: .round, lineJoin: .round))
                 }
-                // A single tappable marker at the trip's final destination.
-                Marker(trip.endPlace.displayName, systemImage: trip.type.symbol,
-                       coordinate: trip.endPlace.coordinate)
-                    .tint(trip.type.accent)
-                    .tag(trip.persistentModelID)
+                Annotation(trip.endPlace.displayName, coordinate: trip.endPlace.coordinate) {
+                    mapPin(trip)
+                }
+                .tag(trip.persistentModelID)
+                .annotationTitles(.hidden)
             }
         }
-        .mapStyle(.standard(elevation: .realistic))
-    }
-
-    private var mapTitle: String {
-        filter == .upcoming ? "Where you're headed" : "Where you've been"
-    }
-
-    /// Distinct final destinations pinned on the map.
-    private var destinationCount: Int {
-        Set(displayed.map(\.endPlace.displayName)).count
-    }
-
-    private var mapAccessory: String? {
-        guard destinationCount > 0 else { return nil }
-        return "\(destinationCount) \(destinationCount == 1 ? "place" : "places")"
-    }
-
-    /// A footer tying the map to the list below: how to use it, plus the total
-    /// distance across the shown trips.
-    private var mapSummary: some View {
-        let distance = displayed.reduce(0) { $0 + $1.distanceMeters }
-        return HStack(spacing: 6) {
-            Image(systemName: "hand.tap")
-            Text("Tap a pin to open a trip")
-            Spacer(minLength: 0)
-            if distance > 0 {
-                Text(Format.distance(distance))
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.primary)
-            }
+        .mapStyle(.standard(elevation: .realistic, pointsOfInterest: .excludingAll))
+        .mapControls {
+            MapCompass()
+            MapScaleView()
         }
-        .font(.caption)
-        .foregroundStyle(.secondary)
+        .onChange(of: mapSelection) { _, id in
+            previewTrip = id.flatMap { pid in displayed.first { $0.persistentModelID == pid } }
+        }
+        .onChange(of: displayed.map(\.persistentModelID)) { _, _ in
+            camera = .automatic
+        }
+    }
+
+    /// A custom destination pin: the mode glyph in a tinted disc, ringed white,
+    /// enlarged while selected.
+    private func mapPin(_ trip: Trip) -> some View {
+        Image(systemName: trip.type.symbol)
+            .font(.system(size: 13, weight: .black))
+            .foregroundStyle(.white)
+            .frame(width: 30, height: 30)
+            .background(trip.type.gradient, in: .circle)
+            .overlay(Circle().strokeBorder(.white, lineWidth: 2))
+            .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
+            .scaleEffect(mapSelection == trip.persistentModelID ? 1.25 : 1)
+            .animation(.snappy, value: mapSelection)
     }
 
     // MARK: Year filter pills
@@ -312,13 +357,11 @@ struct TripsListView: View {
             }
             .padding(5)
             .glassEffect(.regular, in: .capsule)
-            .padding(.horizontal)
             // Animate only the selection highlight; the card list swaps instantly.
             .animation(.snappy(duration: 0.28), value: selectedYear)
         }
         .scrollClipDisabled()
-        .padding(.top, 12)
-        .padding(.bottom, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func yearOption(title: String, year: Int?) -> some View {
@@ -342,35 +385,27 @@ struct TripsListView: View {
         .buttonStyle(.plain)
     }
 
-    private var tripList: some View {
-        ScrollView {
-            GlassEffectContainer(spacing: 16) {
-                LazyVStack(spacing: 16) {
-                    let groups = sections
-                    let showHeaders = groups.count > 1
-                    ForEach(Array(groups.enumerated()), id: \.element.id) { groupIndex, section in
-                        if showHeaders {
-                            sectionLabel(section)
-                                .padding(.top, groupIndex == 0 ? 0 : 8)
+    private var cardsList: some View {
+        GlassEffectContainer(spacing: 16) {
+            LazyVStack(spacing: 16) {
+                let groups = sections
+                let showHeaders = groups.count > 1
+                ForEach(Array(groups.enumerated()), id: \.element.id) { groupIndex, section in
+                    if showHeaders {
+                        sectionLabel(section)
+                            .padding(.top, groupIndex == 0 ? 0 : 8)
+                    }
+                    ForEach(Array(section.trips.enumerated()), id: \.element.id) { index, trip in
+                        NavigationLink {
+                            TripDetailView(trip: trip)
+                        } label: {
+                            TripCardView(trip: trip)
                         }
-                        ForEach(Array(section.trips.enumerated()), id: \.element.id) { index, trip in
-                            NavigationLink {
-                                TripDetailView(trip: trip)
-                            } label: {
-                                TripCardView(trip: trip)
-                            }
-                            .buttonStyle(.pressableCard)
-                            .appear(index)
-                        }
+                        .buttonStyle(.pressableCard)
+                        .appear(index)
                     }
                 }
             }
-            .padding()
-        }
-        .onScrollGeometryChange(for: CGFloat.self) { geo in
-            geo.contentOffset.y + geo.contentInsets.top
-        } action: { _, y in
-            scrollY = y
         }
     }
 
@@ -396,12 +431,22 @@ struct TripsListView: View {
         let trips: [Trip]
     }
 
+    /// IDs of trips already shown in the live "Happening Now" box, so the card
+    /// list can omit them — an active trip appears once, not twice.
+    private var liveTripIDs: Set<PersistentIdentifier> {
+        guard showsLiveSection else { return [] }
+        return Set(shown
+            .filter { TripStatus(trip: $0, records: statusRecords) != nil }
+            .map(\.persistentModelID))
+    }
+
     /// Buckets the displayed trips into time-period sections, preserving the
     /// tab's existing sort order (soonest-first for Upcoming, recent-first for Past).
+    /// Trips currently in the live box are left out so they aren't listed twice.
     private var sections: [TripSection] {
         var order: [String] = []
         var buckets: [String: [Trip]] = [:]
-        for trip in displayed {
+        for trip in displayed where !liveTripIDs.contains(trip.persistentModelID) {
             let title = bucketTitle(for: trip.startDate)
             if buckets[title] == nil { order.append(title) }
             buckets[title, default: []].append(trip)

@@ -17,9 +17,6 @@ import SwiftData
 
 struct ActiveTripsBox: View {
     let trips: [Trip]
-    /// When embedded inside another card (the map card), the box drops its own
-    /// glass chrome and attaches with a hairline divider instead.
-    var embedded: Bool = false
     let onSelect: (Trip) -> Void
 
     @Query private var records: [FlightStatusRecord]
@@ -44,12 +41,8 @@ struct ActiveTripsBox: View {
             .sorted { ($0.status.timeRemaining ?? 0) < ($1.status.timeRemaining ?? 0) }
     }
 
-    @ViewBuilder
     private func box(_ active: [(trip: Trip, status: TripStatus)]) -> some View {
-        let content = VStack(alignment: .leading, spacing: 14) {
-            if embedded {
-                Divider()
-            }
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 Image(systemName: "dot.radiowaves.left.and.right")
                     .font(.caption.weight(.bold))
@@ -75,13 +68,7 @@ struct ActiveTripsBox: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-
-        if embedded {
-            content
-        } else {
-            content
-                .glassCard(tint: (active.first?.status.tint ?? TripType.flight.accent).opacity(0.25))
-        }
+        .glassCard(tint: (active.first?.status.tint ?? TripType.flight.accent).opacity(0.25))
     }
 
     private func row(_ trip: Trip, status: TripStatus) -> some View {
