@@ -73,10 +73,13 @@ struct TripLegCard: View {
     }
 
     private var headerSubtitle: String? {
-        guard trip.isMultiModal else { return nil }
+        let stopsNote = segment.hasStops
+            ? "\(segment.stops.count) stop\(segment.stops.count == 1 ? "" : "s")" : nil
+        guard trip.isMultiModal else { return stopsNote }
         let dep = Format.time(segment.departureDate, in: segment.origin.timeZone)
-        guard let arrival = segment.arrivalDate else { return dep }
-        return "\(dep) → \(Format.time(arrival, in: segment.destination.timeZone))"
+        let times = segment.arrivalDate
+            .map { "\(dep) → \(Format.time($0, in: segment.destination.timeZone))" } ?? dep
+        return [times, stopsNote].compactMap { $0 }.joined(separator: " · ")
     }
 
     // MARK: Detail (expanded)
@@ -100,6 +103,11 @@ struct TripLegCard: View {
                 FlightStatusCardView(segment: segment, embedded: true)
             }
 
+            if segment.hasStops {
+                Divider()
+                stopsList
+            }
+
             Divider()
             HStack {
                 Label("Distance", systemImage: "ruler").font(.caption).foregroundStyle(.secondary)
@@ -108,6 +116,43 @@ struct TripLegCard: View {
             }
 
             if segment.type == .roadTrip { directionsButton }
+        }
+    }
+
+    // MARK: Stops
+
+    private var stopsList: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("\(segment.stops.count) stop\(segment.stops.count == 1 ? "" : "s") along the way",
+                  systemImage: "mappin.and.ellipse")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ForEach(Array(segment.stops.enumerated()), id: \.element.id) { index, stop in
+                stopRow(index: index, stop: stop)
+            }
+        }
+    }
+
+    private func stopRow(index: Int, stop: RoadStop) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            // A little connecting rail so the stops read as points along the drive.
+            VStack(spacing: 0) {
+                Image(systemName: stop.category.symbol)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(stop.category.tint.gradient, in: .circle)
+                if index < segment.stops.count - 1 {
+                    Rectangle().fill(.secondary.opacity(0.25))
+                        .frame(width: 2, height: 14)
+                }
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(stop.place.displayName).font(.subheadline.weight(.semibold))
+                Text(stop.note ?? stop.category.label)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
         }
     }
 
@@ -212,9 +257,11 @@ struct TripLegCard: View {
 
     private var directionsButton: some View {
         Button {
-            MapsLauncher.openDirections(from: segment.origin, to: segment.destination)
+            MapsLauncher.openDirections(from: segment.origin, to: segment.destination,
+                                        via: segment.stops.map(\.place))
         } label: {
-            Label("Open in Apple Maps", systemImage: "location.north.line.fill")
+            Label(segment.hasStops ? "Route with stops in Apple Maps" : "Open in Apple Maps",
+                  systemImage: "location.north.line.fill")
                 .font(.subheadline.weight(.semibold))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 4)

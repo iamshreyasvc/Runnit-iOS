@@ -38,6 +38,24 @@ extension TripType {
     }
 }
 
+extension StopCategory {
+    /// The color used for this stop category's icon and chip.
+    var tint: Color {
+        switch self {
+        case .food:     return .orange
+        case .coffee:   return .brown
+        case .gas:      return .green
+        case .charging: return .mint
+        case .lodging:  return .indigo
+        case .scenic:   return .teal
+        case .sights:   return .purple
+        case .shopping: return .pink
+        case .rest:     return .blue
+        case .other:    return .gray
+        }
+    }
+}
+
 extension ConnectionRisk {
     var color: Color {
         switch self {

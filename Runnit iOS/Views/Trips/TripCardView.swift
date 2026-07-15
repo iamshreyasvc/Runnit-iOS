@@ -188,16 +188,16 @@ struct TripCardView: View {
         return nil
     }
 
-    /// "1 stop · ORD" — where a connecting itinerary puts you on the ground.
+    /// "1 stop · ORD" for a connecting flight, or "2 stops" for road-trip stops.
     private var stopsLine: String? {
         let pairs = trip.connectionPairs
-        guard !pairs.isEmpty else { return nil }
-        let count = "\(pairs.count) stop\(pairs.count == 1 ? "" : "s")"
-        let airports = pairs.map { pair in
-            FlightIdentityParser.iataCode(from: pair.outbound.origin)
-                ?? pair.outbound.origin.displayName
+        if !pairs.isEmpty {
+            let count = "\(pairs.count) stop\(pairs.count == 1 ? "" : "s")"
+            let airports = pairs.map { $0.outbound.origin.codeLabel }
+            return ([count] + airports).joined(separator: " · ")
         }
-        return ([count] + airports).joined(separator: " · ")
+        let roadStops = trip.displaySegments.reduce(0) { $0 + $1.stops.count }
+        return roadStops > 0 ? "\(roadStops) stop\(roadStops == 1 ? "" : "s")" : nil
     }
 
     /// The worst connection risk on this trip, when it's bad enough to shout about.

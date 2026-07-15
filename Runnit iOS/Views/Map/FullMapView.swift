@@ -23,7 +23,7 @@ struct FullMapView: View {
             Map(selection: $mapSelection) {
                 ForEach(trips) { trip in
                     ForEach(trip.displaySegments) { segment in
-                        MapPolyline(coordinates: [segment.origin.coordinate, segment.destination.coordinate])
+                        MapPolyline(coordinates: segment.routePlaces.map(\.coordinate))
                             .stroke(segment.type.accent.opacity(0.85),
                                     style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [1, 6]))
                     }

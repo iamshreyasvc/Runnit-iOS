@@ -22,6 +22,18 @@ private enum LegEditTarget: Identifiable {
     }
 }
 
+/// The stop-editor sheet target: a new stop on a leg, or an existing one.
+private enum StopEditTarget: Identifiable {
+    case new(legIndex: Int)
+    case existing(legIndex: Int, stopIndex: Int)
+    var id: String {
+        switch self {
+        case .new(let leg):                 return "new-\(leg)"
+        case .existing(let leg, let stop):  return "existing-\(leg)-\(stop)"
+        }
+    }
+}
+
 struct AddEditTripView: View {
     /// Existing trip to edit, or nil to create a new one.
     var trip: Trip?
@@ -38,6 +50,7 @@ struct AddEditTripView: View {
     /// index) guarantees the sheet always reads the intended target — otherwise
     /// tapping a leg could open the "Add" branch and append a duplicate.
     @State private var legEditTarget: LegEditTarget?
+    @State private var stopEditTarget: StopEditTarget?
     @State private var isSaving = false
 
     private let accent: Color = .cyan
@@ -51,6 +64,7 @@ struct AddEditTripView: View {
                 List {
                     nameSection
                     legsSection
+                    stopsSection
                     connectionsSection
                     notesSection
                 }
@@ -91,6 +105,7 @@ struct AddEditTripView: View {
                     }
                 }
             }
+            .sheet(item: $stopEditTarget, content: stopEditor)
             .tint(accent)
             .preferredColorScheme((AppAppearance(rawValue: appearanceRaw) ?? .dark).colorScheme)
             .onAppear(perform: loadIfEditing)
@@ -167,6 +182,79 @@ struct AddEditTripView: View {
         }
     }
 
+    /// Intermediate-stop editing, one section per road-trip leg. Stops can only be
+    /// added here on the Edit Trip page — never in the Add Trip wizard.
+    @ViewBuilder
+    private var stopsSection: some View {
+        let roadLegs = Array(legs.enumerated()).filter { $0.element.type == .roadTrip }
+        ForEach(roadLegs, id: \.element.id) { idx, leg in
+            Section {
+                ForEach(Array(leg.stops.enumerated()), id: \.element.id) { stopIdx, stop in
+                    Button {
+                        stopEditTarget = .existing(legIndex: idx, stopIndex: stopIdx)
+                    } label: {
+                        stopRow(stop)
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(rowBackground)
+                }
+                .onDelete { legs[idx].stops.remove(atOffsets: $0) }
+
+                Button {
+                    stopEditTarget = .new(legIndex: idx)
+                } label: {
+                    Label("Add stop", systemImage: "plus.circle.fill").fontWeight(.semibold)
+                }
+                .listRowBackground(rowBackground)
+            } header: {
+                Text(legs.count > 1 ? "Stops · Leg \(idx + 1)" : "Stops")
+            } footer: {
+                if leg.stops.isEmpty {
+                    Text("Add food, gas, or scenic stops along this drive.")
+                } else {
+                    Text("Tap a stop to edit it, or swipe to remove.")
+                }
+            }
+        }
+    }
+
+    private func stopRow(_ stop: RoadStop) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: stop.category.symbol)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(stop.category.tint.gradient, in: .circle)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(stop.place.displayName)
+                    .font(.subheadline.weight(.medium)).lineLimit(1)
+                Text(stop.note ?? stop.category.label)
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+        }
+    }
+
+    @ViewBuilder
+    private func stopEditor(_ target: StopEditTarget) -> some View {
+        switch target {
+        case .new(let legIndex):
+            StopEditorView(titleText: "Add Stop") { stop in
+                guard legs.indices.contains(legIndex) else { return }
+                legs[legIndex].stops.append(stop)
+            }
+        case .existing(let legIndex, let stopIndex):
+            let current = legs.indices.contains(legIndex) && legs[legIndex].stops.indices.contains(stopIndex)
+                ? legs[legIndex].stops[stopIndex] : nil
+            StopEditorView(titleText: "Edit Stop", stop: current) { updated in
+                guard legs.indices.contains(legIndex),
+                      legs[legIndex].stops.indices.contains(stopIndex) else { return }
+                legs[legIndex].stops[stopIndex] = updated
+            }
+        }
+    }
+
     private var notesSection: some View {
         Section("Notes") {
             TextField("Anything to remember…", text: $notes, axis: .vertical)
@@ -197,6 +285,10 @@ struct AddEditTripView: View {
                     .minimumScaleFactor(0.7)
             }
             Spacer()
+            if leg.type == .roadTrip, !leg.stops.isEmpty {
+                Label("\(leg.stops.count)", systemImage: "mappin.and.ellipse")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
             if legs.count > 1 {
                 Text("Leg \(index + 1)").font(.caption2).foregroundStyle(.tertiary)
             }
@@ -292,6 +384,7 @@ struct AddEditTripView: View {
                 seg.boardingPoint = emptyToNil(leg.boardingPoint)
                 seg.seat = emptyToNil(leg.seat)
                 seg.confirmation = emptyToNil(leg.confirmation)
+                seg.stops = leg.type == .roadTrip ? leg.stops : []
                 seg.order = i
                 if flightChanged { deleteFlightRecord(segmentID: seg.id) }
                 keptIDs.insert(sid)
@@ -318,7 +411,7 @@ struct AddEditTripView: View {
     }
 
     private func makeSegment(_ leg: LegDraft, _ origin: Place, _ destination: Place, order: Int) -> TripSegment {
-        TripSegment(
+        let segment = TripSegment(
             type: leg.type,
             origin: origin,
             destination: destination,
@@ -331,6 +424,8 @@ struct AddEditTripView: View {
             confirmation: emptyToNil(leg.confirmation),
             order: order
         )
+        segment.stops = leg.type == .roadTrip ? leg.stops : []
+        return segment
     }
 
     private func deleteFlightRecord(segmentID: UUID) {

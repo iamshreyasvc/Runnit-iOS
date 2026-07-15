@@ -106,10 +106,21 @@ extension Trip {
     }
 
     static var sampleRoadTrip: Trip {
-        .make(title: "Coast Weekend", segments: [
-            TripSegment(type: .roadTrip, origin: .sfo, destination: .bigSur,
-                        departureDate: daysFromNow(20))
-        ])
+        let leg = TripSegment(type: .roadTrip, origin: .sfo, destination: .bigSur,
+                              departureDate: daysFromNow(20))
+        leg.stops = [
+            RoadStop(place: Place(name: "Half Moon Bay", subtitle: "California",
+                                  latitude: 37.4636, longitude: -122.4286,
+                                  isoCountryCode: "US", country: "United States",
+                                  locality: "Half Moon Bay"),
+                     category: .coffee),
+            RoadStop(place: Place(name: "Monterey", subtitle: "California",
+                                  latitude: 36.6002, longitude: -121.8947,
+                                  isoCountryCode: "US", country: "United States",
+                                  locality: "Monterey"),
+                     category: .food, note: "Lunch on the wharf")
+        ]
+        return .make(title: "Coast Weekend", segments: [leg])
     }
 
     /// A multi-modal trip: fly, then take the train, then drive.

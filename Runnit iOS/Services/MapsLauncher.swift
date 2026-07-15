@@ -10,21 +10,24 @@ import MapKit
 
 enum MapsLauncher {
     /// Open Apple Maps with turn-by-turn driving directions from origin to
-    /// destination. Falls back to just showing the destination if the origin
-    /// has no meaningful coordinate.
-    static func openDirections(from origin: Place, to destination: Place) {
-        let destinationItem = mapItem(for: destination)
-
-        let hasOrigin = origin.latitude != 0 || origin.longitude != 0
+    /// destination, routing through any intermediate `waypoints` in order. Falls
+    /// back to just showing the destination if the origin has no coordinate.
+    static func openDirections(from origin: Place, to destination: Place,
+                               via waypoints: [Place] = []) {
         let options: [String: Any] = [
             MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving
         ]
 
-        if hasOrigin {
-            let originItem = mapItem(for: origin)
-            MKMapItem.openMaps(with: [originItem, destinationItem], launchOptions: options)
+        var items: [MKMapItem] = []
+        let hasOrigin = origin.latitude != 0 || origin.longitude != 0
+        if hasOrigin { items.append(mapItem(for: origin)) }
+        items.append(contentsOf: waypoints.map(mapItem(for:)))
+        items.append(mapItem(for: destination))
+
+        if items.count == 1 {
+            items[0].openInMaps(launchOptions: options)
         } else {
-            destinationItem.openInMaps(launchOptions: options)
+            MKMapItem.openMaps(with: items, launchOptions: options)
         }
     }
 

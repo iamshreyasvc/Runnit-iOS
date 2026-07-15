@@ -198,8 +198,14 @@ struct RouteMapView: View {
                     .tint(.gray)
             }
             ForEach(segments) { segment in
-                MapPolyline(coordinates: [segment.origin.coordinate, segment.destination.coordinate])
+                // Route through any intermediate stops so a detour reads truthfully.
+                MapPolyline(coordinates: segment.routePlaces.map(\.coordinate))
                     .stroke(segment.type.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [2, 6]))
+                ForEach(segment.stops) { stop in
+                    Marker(stop.place.displayName, systemImage: stop.category.symbol,
+                           coordinate: stop.place.coordinate)
+                        .tint(stop.category.tint)
+                }
                 Marker(segment.destination.displayName, systemImage: segment.type.symbol,
                        coordinate: segment.destination.coordinate)
                     .tint(segment.type.accent)
@@ -210,7 +216,7 @@ struct RouteMapView: View {
     }
 
     private var coords: [CLLocationCoordinate2D] {
-        segments.flatMap { [$0.origin.coordinate, $0.destination.coordinate] }
+        segments.flatMap { $0.routePlaces.map(\.coordinate) }
     }
 
     private var region: MKCoordinateRegion {
