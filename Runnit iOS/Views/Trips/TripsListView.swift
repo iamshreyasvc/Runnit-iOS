@@ -10,6 +10,7 @@
 import SwiftUI
 import SwiftData
 import MapKit
+import CoreLocation
 
 enum TripFilter: String, CaseIterable, Identifiable {
     case upcoming = "Upcoming"
@@ -34,7 +35,29 @@ struct TripsListView: View {
     @State private var previewTrip: Trip?
     // Map camera; `.automatic` frames all currently shown trips.
     @State private var camera: MapCameraPosition = .automatic
+    // Draggable trip sheet: which detent it rests at, plus the live drag amount.
+    @State private var sheetDetent: SheetDetent = .medium
+    @GestureState private var sheetDrag: CGFloat = 0
+    // Whether the year-filter dropdown bubble is open.
+    @State private var showYearMenu = false
+    // Live device location for the "center on me" button, and the current map
+    // camera so recenters and zoom steps preserve the existing zoom level.
+    @State private var location = LocationProvider()
+    @State private var currentCamera: MapCamera?
     @Namespace private var pillNamespace
+
+    /// How tall the trip sheet rests. `minimized` collapses it to a floating
+    /// pill; the rest is exposed, fully-interactive map.
+    private enum SheetDetent: CaseIterable {
+        case minimized, medium, large
+        func height(in total: CGFloat) -> CGFloat {
+            switch self {
+            case .minimized: return 76      // just the floating pill
+            case .medium:    return total * 0.55
+            case .large:     return total * 0.92
+            }
+        }
+    }
     @State private var selectedYear: Int? = {
         #if DEBUG
         if let raw = ProcessInfo.processInfo.environment["YEAR"], let y = Int(raw) { return y }
@@ -76,13 +99,19 @@ struct TripsListView: View {
                     AppBackground(accent: filter.accent, secondary: .teal)
                     emptyState
                 } else {
-                    mapBackground
-                    tripsSheet
-                    mapTopControls
+                    GeometryReader { proxy in
+                        ZStack(alignment: .bottom) {
+                            mapBackground
+                            mapTopControls
+                            tripSheet(height: proxy.size.height)
+                        }
+                    }
                 }
             }
-            .sectionHeader(filter.rawValue, systemImage: filter.symbol, tint: filter.accent,
-                           subtitle: shown.isEmpty ? nil : "\(displayed.count) \(displayed.count == 1 ? "trip" : "trips")")
+            // The Upcoming/Past title now lives inside the sheet as a pill; keep
+            // the bar minimal so the map reads full-bleed behind it.
+            .navigationTitle(shown.isEmpty ? filter.rawValue : "")
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(item: $selectedTrip) { TripDetailView(trip: $0) }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -100,6 +129,7 @@ struct TripsListView: View {
                 FullMapView(trips: displayed, title: filter.rawValue)
             }
             .onAppear {
+                location.request()
                 #if DEBUG
                 if ProcessInfo.processInfo.environment["SHOW_ADD"] == "1", filter == .upcoming {
                     showingAdd = true
@@ -121,55 +151,138 @@ struct TripsListView: View {
     /// Only Upcoming can hold a trip that's under way.
     private var showsLiveSection: Bool { filter == .upcoming && hasActiveTrip }
 
-    /// The full-bleed map the trip sheet slides up over. Its routes and pins stay
-    /// interactive in the region above the sheet.
+    /// The full-bleed map behind the trip sheet. Nothing overlays the area above
+    /// the sheet, so its routes and pins stay fully interactive — pan, zoom, and
+    /// tap inline without opening the full-screen view.
     private var mapBackground: some View {
         map.ignoresSafeArea()
     }
 
-    /// A scroll view layered over the map: a transparent peek region keeps the top
-    /// of the map visible and interactive, and the glass sheet of trips slides up
-    /// over it as the list scrolls.
-    private var tripsSheet: some View {
-        GeometryReader { proxy in
-            ScrollView {
-                VStack(spacing: 0) {
-                    // The map shows through here; hit-testing is off so pans and
-                    // taps in this band reach the map, not the scroll view.
-                    Color.clear
-                        .frame(height: proxy.size.height * 0.44)
-                        .allowsHitTesting(false)
+    /// The draggable trip sheet pinned to the bottom. Everything above it is
+    /// unobstructed, fully-interactive map. Slide it down to minimize it to a
+    /// floating pill (tap or swipe the pill up to bring the list back).
+    private func tripSheet(height: CGFloat) -> some View {
+        let dragging = sheetDrag != 0
+        let resting = sheetDetent.height(in: height)
+        let live = min(max(resting - sheetDrag, SheetDetent.minimized.height(in: height)),
+                       SheetDetent.large.height(in: height))
+        return ZStack(alignment: .bottom) {
+            // Cross-fade the bodies with opacity so the shared pill's
+            // matchedGeometry morph is the star of the transition.
+            if sheetDetent == .minimized && !dragging {
+                minimizedPill
+                    .transition(.opacity)
+            } else {
+                expandedSheet(sheetHeight: live, containerHeight: height)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.snappy(duration: 0.32), value: sheetDetent)
+    }
 
-                    sheetBody(minHeight: proxy.size.height * 0.62)
+    /// The full glass sheet: grab handle, the tab-title pill, then the scrolling
+    /// trip list (year filters + cards).
+    private func expandedSheet(sheetHeight: CGFloat, containerHeight: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            grabHandle(height: containerHeight)
+            // Pinned header: the title pill, with the year filter inline beside it
+            // as a dropdown that opens a bubble popover.
+            HStack(spacing: 10) {
+                filterPill(minimized: false)
+                Spacer(minLength: 0)
+                if !years.isEmpty { yearDropdown }
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 12)
+
+            ScrollView {
+                VStack(spacing: 16) {
+                    if showsLiveSection {
+                        ActiveTripsBox(trips: shown) { selectedTrip = $0 }
+                    }
+                    cardsList
                 }
+                .padding(.horizontal)
+                .padding(.top, 2)
+                .padding(.bottom, 48)
             }
             .scrollIndicators(.hidden)
         }
-        .ignoresSafeArea(edges: .bottom)
-    }
-
-    private func sheetBody(minHeight: CGFloat) -> some View {
-        VStack(spacing: 16) {
-            Capsule()
-                .fill(.secondary.opacity(0.5))
-                .frame(width: 40, height: 5)
-                .padding(.top, 8)
-
-            if showsLiveSection {
-                ActiveTripsBox(trips: shown) { selectedTrip = $0 }
-            }
-            if !years.isEmpty { yearPills }
-            cardsList
-        }
-        .padding(.horizontal)
-        .padding(.bottom, 48)
-        .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .top)
+        .frame(height: sheetHeight, alignment: .top)
+        .frame(maxWidth: .infinity)
         .background {
             UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30)
                 .fill(.ultraThinMaterial)
                 .ignoresSafeArea(edges: .bottom)
                 .shadow(color: .black.opacity(0.18), radius: 14, y: -3)
         }
+    }
+
+    /// The tab title as a liquid-glass pill — icon, "Upcoming"/"Past", and count.
+    /// Shares a matchedGeometry id so it morphs into the minimized floating pill.
+    private func filterPill(minimized: Bool) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: filter.symbol)
+                .font(.headline.weight(.bold))
+                .foregroundStyle(filter.accent)
+            Text(filter.rawValue)
+                .font(.title2.weight(.heavy))
+            Text("\(displayed.count)")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3)
+                .background(.secondary.opacity(0.15), in: .capsule)
+            if minimized {
+                Image(systemName: "chevron.up")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .glassEffect(.regular, in: .capsule)
+        .matchedGeometryEffect(id: "filterPill", in: pillNamespace)
+    }
+
+    /// The grab strip at the top of the sheet. Dragging it resizes the sheet and
+    /// snaps to the nearest detent (drag all the way down to minimize); a tap
+    /// toggles between medium and large.
+    private func grabHandle(height: CGFloat) -> some View {
+        Capsule()
+            .fill(.secondary.opacity(0.5))
+            .frame(width: 40, height: 5)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .contentShape(.rect)
+            .gesture(
+                DragGesture()
+                    .updating($sheetDrag) { value, state, _ in state = value.translation.height }
+                    .onEnded { value in
+                        let target = sheetDetent.height(in: height) - value.translation.height
+                        sheetDetent = SheetDetent.allCases.min {
+                            abs($0.height(in: height) - target) < abs($1.height(in: height) - target)
+                        } ?? .medium
+                    }
+            )
+            .onTapGesture {
+                sheetDetent = sheetDetent == .large ? .medium : .large
+            }
+    }
+
+    /// The collapsed sheet: the title pill floating at the bottom. Tap it, or
+    /// swipe it up, to bring the list back. It's the same pill as the sheet's
+    /// title, so minimizing/restoring morphs between the two positions.
+    private var minimizedPill: some View {
+        filterPill(minimized: true)
+            .padding(.bottom, 10)
+            .contentShape(.capsule)
+            .onTapGesture { sheetDetent = .medium }
+            .gesture(
+                DragGesture().onEnded { value in
+                    if value.translation.height < -24 { sheetDetent = .medium }
+                }
+            )
     }
 
     // MARK: Map controls, live badge, and route preview
@@ -185,15 +298,30 @@ struct TripsListView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
                 Spacer(minLength: 0)
-                Button {
-                    showingFullMap = true
-                } label: {
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(12)
-                        .glassEffect(.regular, in: .circle)
+                VStack(spacing: 10) {
+                    Button {
+                        showingFullMap = true
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(12)
+                            .glassEffect(.regular, in: .circle)
+                    }
+                    .buttonStyle(.plain)
+
+                    zoomControls
+
+                    // Recenter on the traveler's location, keeping the zoom level.
+                    Button {
+                        recenterOnUser()
+                    } label: {
+                        Image(systemName: "location.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(12)
+                            .glassEffect(.regular, in: .circle)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
             if let trip = previewTrip {
                 routePreview(trip)
@@ -204,6 +332,53 @@ struct TripsListView: View {
         .padding(.top, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(.snappy(duration: 0.3), value: previewTrip?.persistentModelID)
+    }
+
+    /// A clean vertical +/− zoom control, styled to match the round map buttons.
+    private var zoomControls: some View {
+        VStack(spacing: 0) {
+            zoomButton("plus") { zoom(by: 0.5) }
+            Divider().frame(width: 22).opacity(0.6)
+            zoomButton("minus") { zoom(by: 2) }
+        }
+        .glassEffect(.regular, in: .capsule)
+    }
+
+    private func zoomButton(_ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.subheadline.weight(.bold))
+                .frame(width: 42, height: 40)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Smoothly scale the camera distance around its current center, keeping the
+    /// heading and pitch. Clamped so it can't zoom past street or globe level.
+    private func zoom(by factor: Double) {
+        guard let cam = currentCamera else { return }
+        let distance = min(max(cam.distance * factor, 400), 40_000_000)
+        withAnimation(.smooth(duration: 0.35)) {
+            camera = .camera(MapCamera(centerCoordinate: cam.centerCoordinate,
+                                       distance: distance,
+                                       heading: cam.heading,
+                                       pitch: cam.pitch))
+        }
+    }
+
+    /// Recenter on the device location without changing the zoom level (uses the
+    /// current camera distance). Falls back to framing the trips if we don't have
+    /// a fix yet.
+    private func recenterOnUser() {
+        withAnimation(.smooth(duration: 0.4)) {
+            if let coord = location.coordinate {
+                camera = .camera(MapCamera(centerCoordinate: coord,
+                                           distance: currentCamera?.distance ?? 3_000_000))
+            } else {
+                camera = .userLocation(fallback: .automatic)
+            }
+        }
     }
 
     /// The most imminent live trip's reading — drives the floating live badge.
@@ -317,11 +492,15 @@ struct TripsListView: View {
                 .tag(trip.persistentModelID)
                 .annotationTitles(.hidden)
             }
+            UserAnnotation()
         }
         .mapStyle(.standard(elevation: .realistic, pointsOfInterest: .excludingAll))
         .mapControls {
             MapCompass()
             MapScaleView()
+        }
+        .onMapCameraChange(frequency: .continuous) { context in
+            currentCamera = context.camera
         }
         .onChange(of: mapSelection) { _, id in
             previewTrip = id.flatMap { pid in displayed.first { $0.persistentModelID == pid } }
@@ -345,42 +524,64 @@ struct TripsListView: View {
             .animation(.snappy, value: mapSelection)
     }
 
-    // MARK: Year filter pills
+    // MARK: Year filter dropdown
 
-    private var yearPills: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                yearOption(title: "All", year: nil)
+    /// The year filter as a compact dropdown chip inline with the title pill.
+    /// Tapping it opens a bubble popover that emerges from the pill row.
+    private var yearDropdown: some View {
+        Button {
+            showYearMenu = true
+        } label: {
+            HStack(spacing: 8) {
+                Text(selectedYear.map(String.init) ?? "All")
+                    .font(.title2.weight(.heavy))
+                    .foregroundStyle(.primary)
+                Image(systemName: "chevron.down")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(filter.accent)
+                    .rotationEffect(.degrees(showYearMenu ? 180 : 0))
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .glassEffect(.regular, in: .capsule)
+        }
+        .buttonStyle(.plain)
+        .animation(.snappy(duration: 0.25), value: showYearMenu)
+        .popover(isPresented: $showYearMenu, arrowEdge: .top) {
+            VStack(spacing: 4) {
+                yearMenuRow(title: "All", year: nil)
                 ForEach(years, id: \.self) { year in
-                    yearOption(title: String(year), year: year)
+                    yearMenuRow(title: String(year), year: year)
                 }
             }
-            .padding(5)
-            .glassEffect(.regular, in: .capsule)
-            // Animate only the selection highlight; the card list swaps instantly.
-            .animation(.snappy(duration: 0.28), value: selectedYear)
+            .padding(10)
+            .frame(minWidth: 190)
+            .presentationCompactAdaptation(.popover)
         }
-        .scrollClipDisabled()
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func yearOption(title: String, year: Int?) -> some View {
+    private func yearMenuRow(title: String, year: Int?) -> some View {
         let isSelected = selectedYear == year
         return Button {
             selectedYear = year
+            showYearMenu = false
         } label: {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(isSelected ? .white : .primary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background {
-                    if isSelected {
-                        Capsule()
-                            .fill(filter.accent.gradient)
-                            .matchedGeometryEffect(id: "yearHighlight", in: pillNamespace)
-                    }
+            HStack(spacing: 12) {
+                Text(title).font(.body.weight(.semibold))
+                Spacer(minLength: 16)
+                if isSelected {
+                    Image(systemName: "checkmark").font(.subheadline.weight(.bold))
                 }
+            }
+            .foregroundStyle(isSelected ? filter.accent : .primary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isSelected ? filter.accent.opacity(0.15) : .clear)
+            )
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
     }
@@ -492,6 +693,41 @@ struct TripsListView: View {
                 }
                 .buttonStyle(.glassProminent)
             }
+        }
+    }
+}
+
+/// Publishes the device's current coordinate for the map's "center on me"
+/// button. Read-only: it never writes anything, and only updates while the
+/// Trips screen is on-screen.
+@Observable
+final class LocationProvider: NSObject, CLLocationManagerDelegate {
+    @ObservationIgnored private let manager = CLLocationManager()
+    var coordinate: CLLocationCoordinate2D?
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+    }
+
+    func request() {
+        if manager.authorizationStatus == .notDetermined {
+            manager.requestWhenInUseAuthorization()
+        }
+        manager.startUpdatingLocation()
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        if let last = locations.last { coordinate = last.coordinate }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        switch manager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            manager.startUpdatingLocation()
+        default:
+            break
         }
     }
 }
