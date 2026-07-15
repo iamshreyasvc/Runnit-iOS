@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import SwiftData
 
 struct TripOverviewCard: View {
     let trip: Trip
