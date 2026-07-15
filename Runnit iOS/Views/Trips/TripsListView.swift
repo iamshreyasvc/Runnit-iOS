@@ -208,13 +208,14 @@ struct TripsListView: View {
                     if filter == .upcoming, hasActiveTrip {
                         ActiveTripsBox(trips: shown) { selectedTrip = $0 }
                     }
-                    ForEach(displayed) { trip in
+                    ForEach(Array(displayed.enumerated()), id: \.element.id) { index, trip in
                         NavigationLink {
                             TripDetailView(trip: trip)
                         } label: {
                             TripCardView(trip: trip)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressableCard)
+                        .appear(index)
                     }
                 }
             }

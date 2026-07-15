@@ -49,6 +49,81 @@ extension ConnectionRisk {
     }
 }
 
+/// Consistent spacing scale, so padding and stack gaps stay uniform everywhere.
+enum Spacing {
+    static let xs: CGFloat = 6
+    static let sm: CGFloat = 10
+    static let md: CGFloat = 16
+    static let lg: CGFloat = 20
+    static let xl: CGFloat = 28
+}
+
+/// A section heading used inside scroll content: a bold title with an optional
+/// tinted icon. Distinct from the navigation-bar `SectionHeader`.
+struct SectionTitle: View {
+    let title: String
+    var systemImage: String? = nil
+    var tint: Color = .primary
+    var accessory: String? = nil
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(tint)
+            }
+            Text(title).font(.title3.weight(.bold))
+            Spacer()
+            if let accessory {
+                Text(accessory)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A subtle staggered entrance: content fades and rises into place, with a delay
+/// proportional to its index so a column of cards cascades in cleanly.
+struct StaggeredAppear: ViewModifier {
+    let index: Int
+    @State private var shown = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown ? 1 : 0)
+            .offset(y: shown ? 0 : 16)
+            .onAppear {
+                withAnimation(.smooth(duration: 0.5).delay(Double(index) * 0.06)) {
+                    shown = true
+                }
+            }
+    }
+}
+
+extension View {
+    /// Fade + rise entrance, staggered by `index` for a cascading reveal.
+    func appear(_ index: Int = 0) -> some View {
+        modifier(StaggeredAppear(index: index))
+    }
+}
+
+/// A tactile button style for tappable cards: a gentle scale-down on press so
+/// the whole card feels responsive without a heavy highlight.
+struct PressableCardStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.snappy(duration: 0.25), value: configuration.isPressed)
+    }
+}
+
+extension ButtonStyle where Self == PressableCardStyle {
+    static var pressableCard: PressableCardStyle { PressableCardStyle() }
+}
+
 /// A small capped label/value pill — "Terminal 2", "Gate E5", "Delay +55m".
 struct InfoChip: View {
     let label: String
