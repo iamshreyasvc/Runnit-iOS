@@ -21,6 +21,14 @@ struct FlightIdentity: Equatable {
     let arrivalIata: String?
 }
 
+extension Place {
+    /// A compact endpoint label for cards and summaries: the IATA code when the
+    /// name carries one (e.g. "SFO"), else the short display name.
+    var codeLabel: String {
+        FlightIdentityParser.iataCode(from: self) ?? displayName
+    }
+}
+
 enum FlightIdentityParser {
     /// Extract a 3-letter IATA code from a place name's trailing "(XXX)".
     static func iataCode(from place: Place) -> String? {

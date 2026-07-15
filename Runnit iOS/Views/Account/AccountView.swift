@@ -27,11 +27,11 @@ struct AccountView: View {
                 AppBackground(accent: .purple, secondary: .cyan)
                 ScrollView {
                     VStack(spacing: 20) {
-                        profileHeader
-                        lifetimeStats
-                        preferencesCard
-                        flightTrackingCard
-                        aboutCard
+                        profileHeader.appear(0)
+                        lifetimeStats.appear(1)
+                        preferencesCard.appear(2)
+                        flightTrackingCard.appear(3)
+                        aboutCard.appear(4)
                     }
                     .padding()
                 }

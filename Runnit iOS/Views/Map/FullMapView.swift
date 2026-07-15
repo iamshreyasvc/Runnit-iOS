@@ -23,17 +23,30 @@ struct FullMapView: View {
             Map(selection: $mapSelection) {
                 ForEach(trips) { trip in
                     ForEach(trip.displaySegments) { segment in
-                        MapPolyline(coordinates: [segment.origin.coordinate, segment.destination.coordinate])
-                            .stroke(segment.type.accent.opacity(0.85),
-                                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [1, 6]))
+                        let coords = [segment.origin.coordinate, segment.destination.coordinate]
+                        // Casing under a solid, gradient-tinted line — a crisp,
+                        // navigation-grade route rather than a faint dashed hop.
+                        MapPolyline(coordinates: coords)
+                            .stroke(.black.opacity(0.22),
+                                    style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
+                        MapPolyline(coordinates: coords)
+                            .stroke(segment.type.gradient,
+                                    style: StrokeStyle(lineWidth: 4.5, lineCap: .round, lineJoin: .round))
                     }
-                    Marker(trip.endPlace.displayName, systemImage: trip.type.symbol,
-                           coordinate: trip.endPlace.coordinate)
-                        .tint(trip.type.accent)
-                        .tag(trip.persistentModelID)
+                    Annotation(trip.endPlace.displayName, coordinate: trip.endPlace.coordinate) {
+                        Image(systemName: trip.type.symbol)
+                            .font(.system(size: 13, weight: .black))
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                            .background(trip.type.gradient, in: .circle)
+                            .overlay(Circle().strokeBorder(.white, lineWidth: 2))
+                            .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
+                    }
+                    .tag(trip.persistentModelID)
+                    .annotationTitles(.hidden)
                 }
             }
-            .mapStyle(.standard(elevation: .realistic))
+            .mapStyle(.standard(elevation: .realistic, pointsOfInterest: .excludingAll))
             .ignoresSafeArea(edges: .bottom)
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
