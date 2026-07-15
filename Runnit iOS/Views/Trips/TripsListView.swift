@@ -208,18 +208,83 @@ struct TripsListView: View {
                     if filter == .upcoming, hasActiveTrip {
                         ActiveTripsBox(trips: shown) { selectedTrip = $0 }
                     }
-                    ForEach(Array(displayed.enumerated()), id: \.element.id) { index, trip in
-                        NavigationLink {
-                            TripDetailView(trip: trip)
-                        } label: {
-                            TripCardView(trip: trip)
+                    let groups = sections
+                    let showHeaders = groups.count > 1
+                    ForEach(Array(groups.enumerated()), id: \.element.id) { groupIndex, section in
+                        if showHeaders {
+                            sectionLabel(section)
+                                .padding(.top, groupIndex == 0 ? 0 : 8)
                         }
-                        .buttonStyle(.pressableCard)
-                        .appear(index)
+                        ForEach(Array(section.trips.enumerated()), id: \.element.id) { index, trip in
+                            NavigationLink {
+                                TripDetailView(trip: trip)
+                            } label: {
+                                TripCardView(trip: trip)
+                            }
+                            .buttonStyle(.pressableCard)
+                            .appear(index)
+                        }
                     }
                 }
             }
             .padding()
+        }
+    }
+
+    /// A lightweight header above each time-period group of cards.
+    private func sectionLabel(_ section: TripSection) -> some View {
+        HStack {
+            Text(section.title)
+                .font(.subheadline.weight(.bold))
+            Spacer()
+            Text("\(section.trips.count)")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 2)
+    }
+
+    // MARK: Time-period grouping
+
+    private struct TripSection: Identifiable {
+        let id = UUID()
+        let title: String
+        let trips: [Trip]
+    }
+
+    /// Buckets the displayed trips into time-period sections, preserving the
+    /// tab's existing sort order (soonest-first for Upcoming, recent-first for Past).
+    private var sections: [TripSection] {
+        var order: [String] = []
+        var buckets: [String: [Trip]] = [:]
+        for trip in displayed {
+            let title = bucketTitle(for: trip.startDate)
+            if buckets[title] == nil { order.append(title) }
+            buckets[title, default: []].append(trip)
+        }
+        return order.map { TripSection(title: $0, trips: buckets[$0] ?? []) }
+    }
+
+    private func bucketTitle(for date: Date) -> String {
+        let cal = Calendar.current
+        let now = Date()
+        if filter == .upcoming {
+            if cal.isDateInToday(date) { return "Today" }
+            if let week = cal.dateInterval(of: .weekOfYear, for: now), week.contains(date) {
+                return "This Week"
+            }
+            if cal.isDate(date, equalTo: now, toGranularity: .month) { return "This Month" }
+            if cal.isDate(date, equalTo: now, toGranularity: .year) { return "Later This Year" }
+            return String(cal.component(.year, from: date))
+        } else {
+            if cal.isDate(date, equalTo: now, toGranularity: .month) { return "This Month" }
+            if cal.isDate(date, equalTo: now, toGranularity: .year) { return "Earlier This Year" }
+            if let lastYear = cal.date(byAdding: .year, value: -1, to: now),
+               cal.isDate(date, equalTo: lastYear, toGranularity: .year) {
+                return "Last Year"
+            }
+            return String(cal.component(.year, from: date))
         }
     }
 

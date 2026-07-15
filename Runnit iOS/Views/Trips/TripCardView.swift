@@ -2,8 +2,10 @@
 //  TripCardView.swift
 //  Runnit iOS
 //
-//  Liquid Glass card summarizing one trip in the list. Multi-modal trips show a
-//  mode-icon chain, the overall route, and a leg summary.
+//  A boarding-pass style card summarizing one trip in the list: big origin /
+//  destination codes with times, a dashed route connector, and a "stub" line
+//  with the date, carrier, and distance. Kept scannable so a stack of them
+//  reads cleanly.
 //
 
 import SwiftUI
@@ -25,83 +27,164 @@ struct TripCardView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                modeChain
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(headline)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(trip.type.accent)
-                    if let sub = subheadline {
-                        Text(sub)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer()
-
-                if let risk = urgentRisk {
-                    riskPill(risk)
-                }
-                statusPill
-            }
-
-            routeRow
-
-            HStack {
-                Label(Format.date(trip.startDate, in: trip.startPlace.timeZone), systemImage: "calendar")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(Format.distance(trip.distanceMeters))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+        VStack(spacing: 0) {
+            topRow
+            routeRow.padding(.top, 16)
+            if let risk = urgentRisk { riskBanner(risk).padding(.top, 14) }
+            perforation.padding(.vertical, 14)
+            stubRow
         }
         .glassCard(tint: trip.type.accent.opacity(0.28))
     }
 
-    // MARK: Header
+    // MARK: Top — mode + countdown
 
-    /// A single mode circle for simple trips, or a chain of small mode icons
-    /// (e.g. ✈ → 🚆 → 🚗) for multi-modal trips.
+    private var topRow: some View {
+        HStack(spacing: 8) {
+            modeChain
+            Text(modeLabel)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(trip.type.accent)
+            Spacer()
+            countdownChip
+        }
+    }
+
+    /// A single mode circle, or a chain of small mode icons for multi-modal trips.
     @ViewBuilder
     private var modeChain: some View {
         if trip.isMultiModal {
             HStack(spacing: -6) {
                 ForEach(Array(trip.modeSequence.enumerated()), id: \.offset) { _, mode in
                     Image(systemName: mode.symbol)
-                        .font(.caption.weight(.bold))
+                        .font(.caption2.weight(.bold))
                         .foregroundStyle(.white)
-                        .frame(width: 26, height: 26)
+                        .frame(width: 24, height: 24)
                         .background(mode.gradient, in: .circle)
                         .overlay(Circle().strokeBorder(.background, lineWidth: 1.5))
                 }
             }
         } else {
             Image(systemName: trip.type.symbol)
-                .font(.headline)
+                .font(.footnote.weight(.bold))
                 .foregroundStyle(.white)
-                .frame(width: 36, height: 36)
+                .frame(width: 28, height: 28)
                 .background(trip.type.gradient, in: .circle)
         }
     }
 
-    private var headline: String {
+    private var modeLabel: String {
         trip.isMultiModal ? "\(trip.legCount) legs" : trip.type.label
     }
 
-    private var subheadline: String? {
-        if let stops = stopsLine { return stops }
-        if trip.isMultiModal {
-            return trip.modeSequence.map(\.label).joined(separator: " · ")
+    private var countdownChip: some View {
+        Text(Format.relative(trip.startDate))
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .foregroundStyle(trip.isPast ? .secondary : trip.type.accent)
+            .background(
+                (trip.isPast ? Color.secondary : trip.type.accent).opacity(0.15),
+                in: .capsule
+            )
+    }
+
+    // MARK: Route — codes, times, connector
+
+    private var routeRow: some View {
+        HStack(alignment: .top, spacing: 10) {
+            endpoint(code: code(for: trip.startPlace), time: departureTime, alignment: .leading)
+            connector
+            endpoint(code: code(for: trip.endPlace), time: arrivalTime, alignment: .trailing)
         }
-        if let number = trip.vehicleNumber, !number.isEmpty {
-            return number
+    }
+
+    private func endpoint(code: String, time: String?, alignment: HorizontalAlignment) -> some View {
+        VStack(alignment: alignment, spacing: 2) {
+            Text(code)
+                .font(.system(size: 30, weight: .bold, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            if let time {
+                Text(time)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
+        .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
+    }
+
+    private var connector: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 5) {
+                DashedLine().stroke(.tertiary, style: dashStyle).frame(height: 1)
+                Image(systemName: trip.type.symbol)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(trip.type.accent)
+                DashedLine().stroke(.tertiary, style: dashStyle).frame(height: 1)
+            }
+            .frame(height: 16)
+            if let stops = stopsLine {
+                Text(stops)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
+    }
+
+    private var dashStyle: StrokeStyle { StrokeStyle(lineWidth: 1.5, dash: [2, 3]) }
+
+    // MARK: Stub — date · carrier · distance
+
+    private var perforation: some View {
+        DashedLine()
+            .stroke(.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+            .frame(height: 1)
+    }
+
+    private var stubRow: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(stubParts.enumerated()), id: \.offset) { index, part in
+                if index > 0 {
+                    Text("·").foregroundStyle(.tertiary)
+                }
+                Text(part)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+
+    private var stubParts: [String] {
+        var parts = [Format.date(trip.startDate, in: trip.startPlace.timeZone)]
+        if let carrier = carrierLabel { parts.append(carrier) }
+        parts.append(Format.distance(trip.distanceMeters))
+        return parts
+    }
+
+    // MARK: Derived values
+
+    /// IATA code for a flight endpoint, else a short place label.
+    private func code(for place: Place) -> String { place.codeLabel }
+
+    private var departureTime: String? {
+        Format.time(trip.startDate, in: trip.startPlace.timeZone)
+    }
+
+    private var arrivalTime: String? {
+        guard let arrival = trip.displaySegments.last?.arrivalDate else { return nil }
+        return Format.time(arrival, in: trip.endPlace.timeZone)
+    }
+
+    private var carrierLabel: String? {
+        if trip.isMultiModal { return "\(trip.legCount) legs" }
+        if let number = trip.vehicleNumber, !number.isEmpty { return number }
+        if let name = trip.operatorName, !name.isEmpty { return name }
         return nil
     }
 
@@ -124,44 +207,28 @@ struct TripCardView: View {
             .first { $0.isUrgent }
     }
 
-    private func riskPill(_ risk: ConnectionRisk) -> some View {
-        Label(risk.label, systemImage: risk.systemImage)
-            .font(.caption2.weight(.semibold))
-            .labelStyle(.titleAndIcon)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .foregroundStyle(risk.color)
-            .background(risk.color.opacity(0.18), in: .capsule)
-    }
-
-    private var routeRow: some View {
-        HStack(alignment: .center, spacing: 8) {
-            endpoint(trip.startPlace.displayName)
-            Image(systemName: "arrow.right")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-            endpoint(trip.endPlace.displayName)
-            Spacer(minLength: 0)
+    private func riskBanner(_ risk: ConnectionRisk) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: risk.systemImage)
+            Text(risk.label)
+            Spacer()
         }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(risk.color)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(risk.color.opacity(0.16), in: .rect(cornerRadius: 10))
     }
+}
 
-    private func endpoint(_ text: String) -> some View {
-        Text(text)
-            .font(.body.weight(.semibold))
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-    }
-
-    private var statusPill: some View {
-        Text(Format.relative(trip.startDate))
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .foregroundStyle(trip.isPast ? .secondary : trip.type.accent)
-            .background(
-                (trip.isPast ? Color.secondary : trip.type.accent).opacity(0.15),
-                in: .capsule
-            )
+/// A horizontal line used for the dashed route connector and the ticket
+/// perforation. Drawn as a shape so it can take any stroke dash pattern.
+struct DashedLine: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.midY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+        return path
     }
 }
 
