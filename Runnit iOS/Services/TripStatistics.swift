@@ -22,6 +22,13 @@ struct ModeBreakdown: Identifiable, Hashable {
     let count: Int
 }
 
+/// One year's worth of completed trips, for the "trips by year" bar chart.
+struct YearTrips: Identifiable, Hashable {
+    var id: Int { year }
+    let year: Int
+    let count: Int
+}
+
 struct TripStatistics {
     let trips: [Trip]
 
@@ -92,6 +99,30 @@ struct TripStatistics {
         return pastTrips.filter {
             Calendar.current.component(.year, from: $0.departureDate) == year
         }.count
+    }
+
+    /// Completed trips grouped by departure year, oldest first — drives the
+    /// "trips by year" bar chart. Empty when there are no completed trips.
+    var tripsByYear: [YearTrips] {
+        var counts: [Int: Int] = [:]
+        for trip in pastTrips {
+            let year = Calendar.current.component(.year, from: trip.departureDate)
+            counts[year, default: 0] += 1
+        }
+        return counts
+            .map { YearTrips(year: $0.key, count: $0.value) }
+            .sorted { $0.year < $1.year }
+    }
+
+    /// Count of completed trips departing in each calendar month, index 0 =
+    /// January … 11 = December. Drives the yearly "travel rhythm" chart.
+    var tripsByMonth: [Int] {
+        var months = Array(repeating: 0, count: 12)
+        for trip in pastTrips {
+            let month = Calendar.current.component(.month, from: trip.departureDate)
+            if (1...12).contains(month) { months[month - 1] += 1 }
+        }
+        return months
     }
 
     // MARK: Richer analytics (drive fun facts, coverage, and achievements)
