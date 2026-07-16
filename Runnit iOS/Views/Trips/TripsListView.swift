@@ -256,7 +256,9 @@ struct TripsListView: View {
             .frame(maxWidth: .infinity)
             .contentShape(.rect)
             .gesture(
-                DragGesture()
+                // Global space so the handle sliding up under the finger as the
+                // sheet grows can't feed back into the translation and cause jitter.
+                DragGesture(coordinateSpace: .global)
                     .updating($sheetDrag) { value, state, _ in state = value.translation.height }
                     .onEnded { value in
                         let target = sheetDetent.height(in: height) - value.translation.height

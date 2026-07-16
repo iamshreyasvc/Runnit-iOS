@@ -230,13 +230,18 @@ struct TripDetailView: View {
     /// live status while underway), then the scrolling details.
     private func expandedSheet(sheetHeight: CGFloat, containerHeight: CGFloat) -> some View {
         VStack(spacing: 0) {
-            grabHandle(height: containerHeight)
-
-            // Pinned header — stays put while the details scroll beneath it.
+            // Draggable header: the grab handle, the title row, and — while
+            // underway — the live card. The resize gesture covers this whole
+            // region, so you can grab the sheet anywhere up here (including the
+            // active-leg card), not just the thin handle. The scrolling details
+            // below keep their own scroll gesture.
             VStack(spacing: 12) {
+                grabHandleBar
+
                 HStack(spacing: 10) {
                     titlePill(minimized: false)
                     Spacer(minLength: 0)
+                    activeShortcut
                     statusPill
                 }
                 // The one thing that matters mid-trip, pinned above the scroll.
@@ -246,6 +251,8 @@ struct TripDetailView: View {
             }
             .padding(.horizontal)
             .padding(.bottom, 12)
+            .contentShape(.rect)
+            .gesture(sheetDragGesture(height: containerHeight))
 
             ScrollView {
                 VStack(spacing: 16) {
@@ -279,27 +286,34 @@ struct TripDetailView: View {
         }
     }
 
-    /// The grab strip: dragging resizes the sheet and snaps to the nearest detent
-    /// (drag all the way down to minimize); a tap toggles medium / large.
-    private func grabHandle(height: CGFloat) -> some View {
+    /// The grab strip. A tap toggles medium / large; dragging is handled by the
+    /// header's drag gesture, so the whole top region resizes the sheet.
+    private var grabHandleBar: some View {
         Capsule()
             .fill(.secondary.opacity(0.5))
             .frame(width: 40, height: 5)
-            .padding(.vertical, 10)
+            .padding(.top, 10)
+            .padding(.bottom, 2)
             .frame(maxWidth: .infinity)
             .contentShape(.rect)
-            .gesture(
-                DragGesture()
-                    .updating($sheetDrag) { value, state, _ in state = value.translation.height }
-                    .onEnded { value in
-                        let target = sheetDetent.height(in: height) - value.translation.height
-                        sheetDetent = SheetDetent.allCases.min {
-                            abs($0.height(in: height) - target) < abs($1.height(in: height) - target)
-                        } ?? .medium
-                    }
-            )
             .onTapGesture {
                 sheetDetent = sheetDetent == .large ? .medium : .large
+            }
+    }
+
+    /// Resize the sheet from a drag, snapping to the nearest detent on release
+    /// (drag all the way down to minimize). Measured in *global* space: the header
+    /// slides up under the finger as the sheet grows, and a local measurement would
+    /// feed that movement back into the translation — the source of the jitter at
+    /// in-between positions.
+    private func sheetDragGesture(height: CGFloat) -> some Gesture {
+        DragGesture(coordinateSpace: .global)
+            .updating($sheetDrag) { value, state, _ in state = value.translation.height }
+            .onEnded { value in
+                let target = sheetDetent.height(in: height) - value.translation.height
+                sheetDetent = SheetDetent.allCases.min {
+                    abs($0.height(in: height) - target) < abs($1.height(in: height) - target)
+                } ?? .medium
             }
     }
 
@@ -377,6 +391,40 @@ struct TripDetailView: View {
                 .background((trip.isPast ? Color.secondary : trip.type.accent).opacity(0.15),
                             in: .capsule)
         }
+    }
+
+    /// A right-indented shortcut beside the title bubble for the leg happening now:
+    /// driving directions in Apple Maps while on the road, boarding passes in
+    /// Wallet while it's a flight. Only shown while that leg is active.
+    @ViewBuilder
+    private var activeShortcut: some View {
+        if let leg = liveStatus?.focusSegment {
+            switch leg.type {
+            case .roadTrip:
+                shortcutButton("arrow.triangle.turn.up.right.diamond.fill", tint: leg.type.accent) {
+                    MapsLauncher.openDirections(from: leg.origin, to: leg.destination)
+                }
+            case .flight:
+                shortcutButton("wallet.pass.fill", tint: leg.type.accent) {
+                    WalletLauncher.openBoardingPasses()
+                }
+            default:
+                EmptyView()
+            }
+        }
+    }
+
+    /// A liquid-glass icon button sized to sit level with the title pill.
+    private func shortcutButton(_ icon: String, tint: Color,
+                                action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(tint)
+                .frame(width: 46, height: 46)
+                .glassEffect(.regular, in: .circle)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: Itinerary
