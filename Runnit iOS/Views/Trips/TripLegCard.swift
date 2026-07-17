@@ -89,6 +89,12 @@ struct TripLegCard: View {
             routeEndpoint(icon: "circle.circle", label: "From", place: segment.origin,
                           time: segment.departureDate, zone: segment.origin.timeZone)
             zoneShiftRow
+
+            if segment.hasStops {
+                Divider()
+                stopsList
+            }
+
             Divider()
             routeEndpoint(icon: "mappin.circle.fill", label: "To", place: segment.destination,
                           time: segment.arrivalDate, zone: segment.destination.timeZone)
@@ -101,11 +107,6 @@ struct TripLegCard: View {
             if segment.type == .flight {
                 Divider()
                 FlightStatusCardView(segment: segment, embedded: true)
-            }
-
-            if segment.hasStops {
-                Divider()
-                stopsList
             }
 
             Divider()
