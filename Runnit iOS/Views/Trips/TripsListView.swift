@@ -478,7 +478,9 @@ struct TripsListView: View {
         Map(position: $camera, selection: $mapSelection) {
             ForEach(displayed) { trip in
                 ForEach(trip.displaySegments) { segment in
-                    let coords = segment.routePlaces.map(\.coordinate)
+                    // Road trips draw the real roads when routed; otherwise a
+                    // straight line through the leg's places.
+                    let coords = segment.routedCoordinates ?? segment.routePlaces.map(\.coordinate)
                     // A darker, wider casing under each solid line reads like a
                     // navigation route — crisp against land and water alike.
                     MapPolyline(coordinates: coords)

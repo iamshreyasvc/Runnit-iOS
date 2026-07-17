@@ -23,7 +23,9 @@ struct FullMapView: View {
             Map(selection: $mapSelection) {
                 ForEach(trips) { trip in
                     ForEach(trip.displaySegments) { segment in
-                        let coords = segment.routePlaces.map(\.coordinate)
+                        // Road trips draw the real roads when routed; otherwise a
+                        // straight line through the leg's places.
+                        let coords = segment.routedCoordinates ?? segment.routePlaces.map(\.coordinate)
                         // Casing under a solid, gradient-tinted line — a crisp,
                         // navigation-grade route rather than a faint dashed hop.
                         MapPolyline(coordinates: coords)

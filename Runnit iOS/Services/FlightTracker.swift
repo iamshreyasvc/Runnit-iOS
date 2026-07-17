@@ -156,6 +156,40 @@ final class FlightTracker {
         }
     }
 
+    // MARK: Flight path (the actual flown track, for the map)
+
+    /// The real path this flight flew, as map coordinates, or `nil` when it can't
+    /// be drawn (no token, unparseable number, hasn't flown yet, or FR24 has no
+    /// track). Resolves the leg's FR24 id from the summaries — the same matching
+    /// the status snapshot uses — then pulls its positional trail. Works for
+    /// historical flights, so Past Trips draw their true route.
+    func flightPath(for segment: TripSegment) async -> [RoutePoint]? {
+        guard Secrets.hasFlightRadarToken else { return nil }
+        guard let identity = FlightIdentityParser.resolve(segment) else { return nil }
+        // FR24 only has a track once the flight has actually flown.
+        guard Self.isWithinTrackingReach(segment) else { return nil }
+
+        do {
+            let summaries = try await client.summaries(
+                flightIata: identity.flightIata,
+                from: segment.departureDate.addingTimeInterval(-24 * 3600),
+                to: min(segment.departureDate.addingTimeInterval(48 * 3600), Date())
+            )
+            guard let summary = bestSummary(summaries, identity: identity, target: segment.departureDate),
+                  let fr24ID = summary.fr24ID
+            else { return nil }
+
+            let points = try await client.flightTracks(flightID: fr24ID)
+            let coords = points.compactMap { point -> RoutePoint? in
+                guard let lat = point.lat, let lon = point.lon else { return nil }
+                return RoutePoint(latitude: lat, longitude: lon)
+            }
+            return coords.count >= 2 ? coords : nil
+        } catch {
+            return nil
+        }
+    }
+
     // MARK: Cache reads
 
     /// The cached snapshot for a segment, if any.

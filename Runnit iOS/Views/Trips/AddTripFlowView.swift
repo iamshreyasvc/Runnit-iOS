@@ -707,7 +707,7 @@ extension AddTripFlowView {
                 if destination.isoCountryCode == nil || destination.timeZoneIdentifier == nil {
                     destination = await destination.reverseGeocoded()
                 }
-                segments.append(TripSegment(
+                let segment = TripSegment(
                     type: leg.type,
                     origin: origin,
                     destination: destination,
@@ -719,7 +719,16 @@ extension AddTripFlowView {
                     seat: nilIfEmpty(leg.seat),
                     confirmation: nilIfEmpty(leg.confirmation),
                     order: i
-                ))
+                )
+                // Precompute the road-following route so a new road trip shows the
+                // real roads the first time its map appears. Best-effort: the map's
+                // refresh retries later if this misses (e.g. offline at save).
+                if segment.type == .roadTrip,
+                   let route = await RouteEstimator.drivingRoute(through: segment.routePlaces) {
+                    segment.routePolyline = route
+                    segment.routeSignature = segment.geometrySignature
+                }
+                segments.append(segment)
             }
             guard !segments.isEmpty else { isSaving = false; return }
 

@@ -135,8 +135,9 @@ struct TripDetailView: View {
                 .annotationTitles(.hidden)
             }
             ForEach(trip.displaySegments) { segment in
-                // Route through any intermediate stops so a detour reads truthfully.
-                let coords = segment.routePlaces.map(\.coordinate)
+                // Road trips draw the actual roads (Apple Maps directions through
+                // each stop); other modes route straight through their stops.
+                let coords = segment.routedCoordinates ?? segment.routePlaces.map(\.coordinate)
                 MapPolyline(coordinates: coords)
                     .stroke(.black.opacity(0.22),
                             style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
@@ -175,6 +176,21 @@ struct TripDetailView: View {
         .onMapCameraChange(frequency: .continuous) { context in
             currentCamera = context.camera
         }
+        // Fill in (or refresh) the real path for each leg — driving directions for
+        // road trips, the flown track for flights. Keyed on the routed legs'
+        // geometry so it re-runs when a stop is added, moved, or removed.
+        .task(id: routeGeometrySignature) {
+            await RouteRefresher.refresh(trip.displaySegments, in: context, tracker: tracker)
+        }
+    }
+
+    /// Fingerprint of every routed leg's geometry, so the route refresh re-runs
+    /// only when a road or flight leg's origin, stops, or destination change.
+    private var routeGeometrySignature: String {
+        trip.displaySegments
+            .filter { $0.type == .roadTrip || $0.type == .flight }
+            .map(\.geometrySignature)
+            .joined(separator: "~")
     }
 
     /// Floating controls above the map, kept out of the map's ignored safe area so

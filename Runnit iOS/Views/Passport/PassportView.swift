@@ -87,7 +87,9 @@ struct PassportView: View {
         Map(position: $camera, selection: $mapSelection) {
             ForEach(pastTrips) { trip in
                 ForEach(trip.displaySegments) { segment in
-                    let coords = [segment.origin.coordinate, segment.destination.coordinate]
+                    // Real roads for routed road trips; otherwise a clean endpoint
+                    // hop (intermediate stops are intentionally omitted here).
+                    let coords = segment.routedCoordinates ?? [segment.origin.coordinate, segment.destination.coordinate]
                     MapPolyline(coordinates: coords)
                         .stroke(.black.opacity(0.22),
                                 style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
