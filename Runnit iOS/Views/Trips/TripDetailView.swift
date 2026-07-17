@@ -80,6 +80,20 @@ struct TripDetailView: View {
         }
         .onAppear(perform: expandKeyLegs)
         .task { await backfillTimeZones() }
+        // Adding a stop re-plans the route, and the new one is often outside the
+        // old frame — a stop added mid-drive reads as nothing having happened if
+        // the map keeps its previous camera. Re-fit whenever the route changes,
+        // from this page's own rail or from the Edit Trip sheet.
+        .onChange(of: routePlaces) { _, _ in
+            withAnimation(.smooth(duration: 0.45)) { camera = .automatic }
+        }
+    }
+
+    /// Every place the trip passes through, in order: each leg's origin, its
+    /// stops, its destination. Changes whenever a stop or leg is added, edited,
+    /// reordered, or removed.
+    private var routePlaces: [Place] {
+        trip.displaySegments.flatMap(\.routePlaces)
     }
 
     private var toolbarMenu: some ToolbarContent {
@@ -121,13 +135,26 @@ struct TripDetailView: View {
                 .annotationTitles(.hidden)
             }
             ForEach(trip.displaySegments) { segment in
-                let coords = [segment.origin.coordinate, segment.destination.coordinate]
+                // Route through any intermediate stops so a detour reads truthfully.
+                let coords = segment.routePlaces.map(\.coordinate)
                 MapPolyline(coordinates: coords)
                     .stroke(.black.opacity(0.22),
                             style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
                 MapPolyline(coordinates: coords)
                     .stroke(segment.type.gradient,
                             style: StrokeStyle(lineWidth: 4.5, lineCap: .round, lineJoin: .round))
+                ForEach(segment.stops) { stop in
+                    Annotation(stop.place.displayName, coordinate: stop.place.coordinate) {
+                        Image(systemName: stop.category.symbol)
+                            .font(.system(size: 10, weight: .black))
+                            .foregroundStyle(.white)
+                            .frame(width: 22, height: 22)
+                            .background(stop.category.tint.gradient, in: .circle)
+                            .overlay(Circle().strokeBorder(.white, lineWidth: 2))
+                            .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
+                    }
+                    .annotationTitles(.hidden)
+                }
                 Annotation(segment.destination.displayName, coordinate: segment.destination.coordinate) {
                     Image(systemName: segment.type.symbol)
                         .font(.system(size: 13, weight: .black))

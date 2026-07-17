@@ -23,7 +23,7 @@ struct FullMapView: View {
             Map(selection: $mapSelection) {
                 ForEach(trips) { trip in
                     ForEach(trip.displaySegments) { segment in
-                        let coords = [segment.origin.coordinate, segment.destination.coordinate]
+                        let coords = segment.routePlaces.map(\.coordinate)
                         // Casing under a solid, gradient-tinted line — a crisp,
                         // navigation-grade route rather than a faint dashed hop.
                         MapPolyline(coordinates: coords)

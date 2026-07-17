@@ -29,6 +29,10 @@ final class TripSegment {
     var seat: String?
     var confirmation: String?
 
+    /// Intermediate stops along a road-trip leg, in travel order. Empty for every
+    /// other mode. Additive with a default so existing segments migrate cleanly.
+    var stops: [RoadStop] = []
+
     /// Position of this leg within its trip (0-based).
     var order: Int = 0
 
@@ -71,9 +75,19 @@ final class TripSegment {
     /// The moment this leg is "done" — arrival if known, otherwise departure.
     var endDate: Date { arrivalDate ?? departureDate }
 
-    /// Great-circle distance between this leg's endpoints.
+    /// Whether this leg has any intermediate stops.
+    var hasStops: Bool { !stops.isEmpty }
+
+    /// Every place the leg passes through, in order: origin, each stop, destination.
+    var routePlaces: [Place] { [origin] + stops.map(\.place) + [destination] }
+
+    /// Great-circle distance along this leg. With intermediate stops it sums the
+    /// hops through each one, so a detour is reflected rather than ignored.
     var distanceMeters: Double {
-        origin.clLocation.distance(from: destination.clLocation)
+        guard hasStops else { return origin.clLocation.distance(from: destination.clLocation) }
+        let places = routePlaces
+        return zip(places, places.dropFirst())
+            .reduce(0) { $0 + $1.0.clLocation.distance(from: $1.1.clLocation) }
     }
 
     /// A human label, e.g. "SFO → JFK".

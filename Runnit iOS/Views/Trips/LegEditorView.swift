@@ -27,6 +27,8 @@ struct LegDraft: Identifiable, Hashable {
     var boardingPoint = ""
     var seat = ""
     var confirmation = ""
+    /// Intermediate stops for a road-trip leg, in travel order.
+    var stops: [RoadStop] = []
 
     init() {}
 
@@ -46,6 +48,7 @@ struct LegDraft: Identifiable, Hashable {
         boardingPoint = segment.boardingPoint ?? ""
         seat = segment.seat ?? ""
         confirmation = segment.confirmation ?? ""
+        stops = segment.stops
     }
 
     var isComplete: Bool { origin != nil && destination != nil }

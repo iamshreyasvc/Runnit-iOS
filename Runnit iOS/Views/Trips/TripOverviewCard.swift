@@ -141,13 +141,16 @@ struct TripOverviewCard: View {
     private var statusIcon: String { trip.isPast ? "checkmark.circle" : "clock" }
     private var statusTint: Color { trip.isPast ? .secondary : trip.type.accent }
 
-    /// "1 stop · ORD" for a connecting itinerary.
+    /// "1 stop · ORD" for a connecting flight, or "2 stops" for road-trip stops.
     private var stopsLine: String? {
         let pairs = trip.connectionPairs
-        guard !pairs.isEmpty else { return nil }
-        let count = "\(pairs.count) stop\(pairs.count == 1 ? "" : "s")"
-        let airports = pairs.map { $0.outbound.origin.codeLabel }
-        return ([count] + airports).joined(separator: " · ")
+        if !pairs.isEmpty {
+            let count = "\(pairs.count) stop\(pairs.count == 1 ? "" : "s")"
+            let airports = pairs.map { $0.outbound.origin.codeLabel }
+            return ([count] + airports).joined(separator: " · ")
+        }
+        let roadStops = trip.displaySegments.reduce(into: 0) { $0 += $1.stops.count }
+        return roadStops > 0 ? "\(roadStops) stop\(roadStops == 1 ? "" : "s")" : nil
     }
 }
 

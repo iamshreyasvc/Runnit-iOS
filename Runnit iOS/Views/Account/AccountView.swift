@@ -173,9 +173,13 @@ struct AccountView: View {
         }
         .frame(maxWidth: .infinity)
         .background(
+            // Unlike the Trips/Passport sheets, this one scrolls with the page
+            // instead of being pinned, so it can't reach the safe area from
+            // inside the ScrollView. Overhanging the material past the content
+            // covers the bottom inset and any rubber-band; the ScrollView clips it.
             UnevenRoundedRectangle(topLeadingRadius: 34, topTrailingRadius: 34)
                 .fill(.ultraThinMaterial)
-                .ignoresSafeArea(edges: .bottom)
+                .padding(.bottom, -400)
                 .shadow(color: .black.opacity(0.18), radius: 14, y: -3)
         )
     }
