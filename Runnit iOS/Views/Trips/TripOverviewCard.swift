@@ -12,11 +12,17 @@ import SwiftData
 
 struct TripOverviewCard: View {
     let trip: Trip
+    /// When the live status card above already shows the route and times, drop
+    /// the duplicated route row and status, leaving just the metrics that card
+    /// doesn't cover (distance, duration, legs).
+    var compact: Bool = false
 
     var body: some View {
         VStack(spacing: 16) {
-            routeRow
-            Divider()
+            if !compact {
+                routeRow
+                Divider()
+            }
             metricsRow
         }
         .frame(maxWidth: .infinity)
@@ -76,7 +82,10 @@ struct TripOverviewCard: View {
 
     private var metricsRow: some View {
         HStack(spacing: 8) {
-            metric(statusIcon, statusValue, "Status", statusTint)
+            // The live card already shows the status pill, so skip it when compact.
+            if !compact {
+                metric(statusIcon, statusValue, "Status", statusTint)
+            }
             metric("ruler", Format.distance(trip.distanceMeters), "Distance", .blue)
             if let duration = durationValue {
                 metric("timer", duration, "Duration", .orange)
