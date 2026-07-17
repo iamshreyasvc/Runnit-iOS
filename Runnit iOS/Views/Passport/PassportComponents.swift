@@ -149,64 +149,6 @@ struct StatCard: View {
     }
 }
 
-/// World coverage: how many continents the traveler has touched, with an
-/// animated progress bar and a chip for each continent visited.
-struct ContinentCoverageCard: View {
-    let visited: [Continent]
-
-    @State private var animateProgress = false
-
-    private var fraction: Double {
-        Double(visited.count) / Double(Continent.inhabitedCount)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("\(visited.count)")
-                    .font(.system(size: 40, weight: .bold, design: .rounded))
-                    .foregroundStyle(.teal)
-                Text("of \(Continent.inhabitedCount) continents")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.secondary.opacity(0.18))
-                    Capsule()
-                        .fill(LinearGradient(colors: [.teal, .green],
-                                             startPoint: .leading, endPoint: .trailing))
-                        .frame(width: geo.size.width * (animateProgress ? fraction : 0))
-                }
-            }
-            .frame(height: 10)
-
-            if !visited.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(visited) { continent in
-                            Text("\(continent.emoji) \(continent.rawValue)")
-                                .font(.caption2.weight(.medium))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(.teal.opacity(0.15), in: .capsule)
-                                .fixedSize()
-                        }
-                    }
-                }
-                .scrollClipDisabled()
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard(tint: .teal.opacity(0.2))
-        .onAppear {
-            withAnimation(.smooth(duration: 0.8).delay(0.2)) { animateProgress = true }
-        }
-    }
-}
-
 /// A milestone badge: bright when unlocked, dimmed with a progress ring when not.
 struct AchievementBadge: View {
     let achievement: Achievement
