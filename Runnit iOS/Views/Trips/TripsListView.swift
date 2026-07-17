@@ -256,7 +256,9 @@ struct TripsListView: View {
             .frame(maxWidth: .infinity)
             .contentShape(.rect)
             .gesture(
-                DragGesture()
+                // Global space so the handle sliding up under the finger as the
+                // sheet grows can't feed back into the translation and cause jitter.
+                DragGesture(coordinateSpace: .global)
                     .updating($sheetDrag) { value, state, _ in state = value.translation.height }
                     .onEnded { value in
                         let target = sheetDetent.height(in: height) - value.translation.height
@@ -597,8 +599,13 @@ struct TripsListView: View {
                             .padding(.top, groupIndex == 0 ? 0 : 8)
                     }
                     ForEach(Array(section.trips.enumerated()), id: \.element.id) { index, trip in
-                        NavigationLink {
-                            TripDetailView(trip: trip)
+                        // Navigate by setting `selectedTrip` — the same path the
+                        // Happening Now box and the map's route preview use — so the
+                        // whole screen drives one `navigationDestination(item:)`.
+                        // Mixing that with closure-based NavigationLinks shadows the
+                        // item destination and silently breaks those other taps.
+                        Button {
+                            selectedTrip = trip
                         } label: {
                             TripCardView(trip: trip)
                         }

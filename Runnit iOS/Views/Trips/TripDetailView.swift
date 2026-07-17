@@ -2,9 +2,11 @@
 //  TripDetailView.swift
 //  Runnit iOS
 //
-//  Full trip detail, reorganized for scannability: live status (when underway)
-//  and the route map up top, a consolidated overview card, then a collapsible
-//  per-leg itinerary that keeps the details a tap away instead of all at once.
+//  A trip's own screen, built like the Upcoming / Past tabs: the trip's route is
+//  a full-bleed, interactive map, with a draggable glass sheet of details that
+//  slides up over it. While the trip is underway the live status is pinned to the
+//  top of the sheet (and onto the sheet's minimized pill) so "what's happening
+//  now" stays visible no matter how far the details are scrolled.
 //
 
 import SwiftUI
@@ -22,42 +24,49 @@ struct TripDetailView: View {
 
     @State private var showingEdit = false
     @State private var showingDeleteConfirm = false
+    @State private var showingFullMap = false
     @State private var expandedLegs: Set<UUID> = []
 
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                // While the trip is underway, "what's happening now" comes first.
-                if isUnderway {
-                    TripStatusCardView(trip: trip)
-                }
+    // Map camera; `.automatic` frames the whole route. Tracked so the zoom
+    // buttons scale around wherever the traveler has panned to.
+    @State private var camera: MapCameraPosition = .automatic
+    @State private var currentCamera: MapCamera?
 
-                RouteMapView(trip: trip)
-                    .frame(height: 220)
-                    .clipShape(.rect(cornerRadius: 24))
+    // Draggable detail sheet: which detent it rests at, plus the live drag amount.
+    @State private var sheetDetent: SheetDetent = .medium
+    @GestureState private var sheetDrag: CGFloat = 0
+    @Namespace private var pillNamespace
 
-                // While underway, the live card above already shows the route and
-                // times, so the overview collapses to just its extra metrics.
-                TripOverviewCard(trip: trip, compact: isUnderway)
-
-                // A connection in trouble outranks everything — unless the live
-                // card up top is already saying exactly that.
-                if !isUnderway, let urgent = connections.first(where: { $0.risk.isUrgent }) {
-                    connectionAlert(urgent)
-                }
-
-                itinerary
-
-                if let notes = trip.notes, !notes.isEmpty {
-                    notesCard(notes)
-                }
+    /// How tall the detail sheet rests. `minimized` collapses it to a floating
+    /// pill; the rest is exposed, fully-interactive map.
+    private enum SheetDetent: CaseIterable {
+        case minimized, medium, large
+        func height(in total: CGFloat) -> CGFloat {
+            switch self {
+            case .minimized: return 88       // just the floating pill
+            case .medium:    return total * 0.5
+            case .large:     return total * 0.92
             }
-            .padding()
         }
-        .navigationTitle(navigationTitle)
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .bottom) {
+                mapBackground
+                mapTopControls
+                detailSheet(height: proxy.size.height)
+            }
+        }
+        // The title lives in the sheet's pill; keep the bar minimal so the map
+        // reads full-bleed behind the back button and menu.
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarMenu }
         .sheet(isPresented: $showingEdit) { AddEditTripView(trip: trip) }
+        .fullScreenCover(isPresented: $showingFullMap) {
+            FullMapView(trips: [trip], title: navigationTitle)
+        }
         .confirmationDialog("Delete this trip?", isPresented: $showingDeleteConfirm,
                             titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
@@ -82,8 +91,379 @@ struct TripDetailView: View {
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
+                    .padding(8)
+                    .glassEffect(.regular, in: .circle)
             }
         }
+    }
+
+    // MARK: Full-bleed interactive map
+
+    /// The trip's route as a full-bleed map behind the sheet. Everything above the
+    /// sheet is unobstructed, so its routes and pins stay pannable and zoomable.
+    private var mapBackground: some View {
+        map.ignoresSafeArea()
+    }
+
+    /// Casing-backed, gradient-tinted route lines per leg, a neutral start dot, and
+    /// a custom mode pin at each destination — the same language as the trip map on
+    /// the Upcoming / Past tabs. `.automatic` frames the whole route.
+    private var map: some View {
+        Map(position: $camera) {
+            if let first = trip.displaySegments.first {
+                Annotation(first.origin.displayName, coordinate: first.origin.coordinate) {
+                    Circle()
+                        .fill(.gray.gradient)
+                        .frame(width: 15, height: 15)
+                        .overlay(Circle().strokeBorder(.white, lineWidth: 2))
+                        .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
+                }
+                .annotationTitles(.hidden)
+            }
+            ForEach(trip.displaySegments) { segment in
+                let coords = [segment.origin.coordinate, segment.destination.coordinate]
+                MapPolyline(coordinates: coords)
+                    .stroke(.black.opacity(0.22),
+                            style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
+                MapPolyline(coordinates: coords)
+                    .stroke(segment.type.gradient,
+                            style: StrokeStyle(lineWidth: 4.5, lineCap: .round, lineJoin: .round))
+                Annotation(segment.destination.displayName, coordinate: segment.destination.coordinate) {
+                    Image(systemName: segment.type.symbol)
+                        .font(.system(size: 13, weight: .black))
+                        .foregroundStyle(.white)
+                        .frame(width: 30, height: 30)
+                        .background(segment.type.gradient, in: .circle)
+                        .overlay(Circle().strokeBorder(.white, lineWidth: 2))
+                        .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
+                }
+                .annotationTitles(.hidden)
+            }
+        }
+        .mapStyle(.standard(elevation: .realistic, pointsOfInterest: .excludingAll))
+        .mapControls {
+            MapCompass()
+            MapScaleView()
+        }
+        .onMapCameraChange(frequency: .continuous) { context in
+            currentCamera = context.camera
+        }
+    }
+
+    /// Floating controls above the map, kept out of the map's ignored safe area so
+    /// they clear the navigation bar: full-screen expand and a +/− zoom stepper.
+    private var mapTopControls: some View {
+        HStack {
+            Spacer(minLength: 0)
+            VStack(spacing: 10) {
+                Button {
+                    showingFullMap = true
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(12)
+                        .glassEffect(.regular, in: .circle)
+                }
+                .buttonStyle(.plain)
+
+                zoomControls
+            }
+        }
+        .padding(.horizontal)
+        .padding(.top, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var zoomControls: some View {
+        VStack(spacing: 0) {
+            zoomButton("plus") { zoom(by: 0.5) }
+            Divider().frame(width: 22).opacity(0.6)
+            zoomButton("minus") { zoom(by: 2) }
+        }
+        .glassEffect(.regular, in: .capsule)
+    }
+
+    private func zoomButton(_ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.subheadline.weight(.bold))
+                .frame(width: 42, height: 40)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Scale the camera distance around its current center, keeping heading/pitch.
+    private func zoom(by factor: Double) {
+        guard let cam = currentCamera else { return }
+        let distance = min(max(cam.distance * factor, 400), 40_000_000)
+        withAnimation(.smooth(duration: 0.35)) {
+            camera = .camera(MapCamera(centerCoordinate: cam.centerCoordinate,
+                                       distance: distance,
+                                       heading: cam.heading,
+                                       pitch: cam.pitch))
+        }
+    }
+
+    // MARK: Draggable detail sheet
+
+    /// The draggable detail sheet pinned to the bottom. Slide it down to minimize
+    /// it to a floating pill (tap or swipe the pill up to bring the details back).
+    private func detailSheet(height: CGFloat) -> some View {
+        let dragging = sheetDrag != 0
+        let resting = sheetDetent.height(in: height)
+        let live = min(max(resting - sheetDrag, SheetDetent.minimized.height(in: height)),
+                       SheetDetent.large.height(in: height))
+        return ZStack(alignment: .bottom) {
+            if sheetDetent == .minimized && !dragging {
+                minimizedPill
+                    .transition(.opacity)
+            } else {
+                expandedSheet(sheetHeight: live, containerHeight: height)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.snappy(duration: 0.32), value: sheetDetent)
+    }
+
+    /// The full glass sheet: grab handle, a pinned header (the title pill, plus the
+    /// live status while underway), then the scrolling details.
+    private func expandedSheet(sheetHeight: CGFloat, containerHeight: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            // Draggable header: the grab handle, the title row, and — while
+            // underway — the live card. The resize gesture covers this whole
+            // region, so you can grab the sheet anywhere up here (including the
+            // active-leg card), not just the thin handle. The scrolling details
+            // below keep their own scroll gesture.
+            VStack(spacing: 12) {
+                grabHandleBar
+
+                HStack(spacing: 10) {
+                    titlePill(minimized: false)
+                    Spacer(minLength: 0)
+                    activeShortcut
+                    statusPill
+                }
+                // The one thing that matters mid-trip, pinned above the scroll.
+                if isUnderway {
+                    TripStatusCardView(trip: trip)
+                }
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 12)
+            .contentShape(.rect)
+            .gesture(sheetDragGesture(height: containerHeight))
+
+            ScrollView {
+                VStack(spacing: 16) {
+                    // While underway the pinned card already shows the route and
+                    // times, so the overview drops to just its extra metrics.
+                    TripOverviewCard(trip: trip, compact: isUnderway)
+
+                    if !isUnderway, let urgent = connections.first(where: { $0.risk.isUrgent }) {
+                        connectionAlert(urgent)
+                    }
+
+                    itinerary
+
+                    if let notes = trip.notes, !notes.isEmpty {
+                        notesCard(notes)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.top, 2)
+                .padding(.bottom, 48)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .frame(height: sheetHeight, alignment: .top)
+        .frame(maxWidth: .infinity)
+        .background {
+            UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30)
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea(edges: .bottom)
+                .shadow(color: .black.opacity(0.18), radius: 14, y: -3)
+        }
+    }
+
+    /// The grab strip. A tap toggles medium / large; dragging is handled by the
+    /// header's drag gesture, so the whole top region resizes the sheet.
+    private var grabHandleBar: some View {
+        Capsule()
+            .fill(.secondary.opacity(0.5))
+            .frame(width: 40, height: 5)
+            .padding(.top, 10)
+            .padding(.bottom, 2)
+            .frame(maxWidth: .infinity)
+            .contentShape(.rect)
+            .onTapGesture {
+                sheetDetent = sheetDetent == .large ? .medium : .large
+            }
+    }
+
+    /// Resize the sheet from a drag, snapping to the nearest detent on release
+    /// (drag all the way down to minimize). Measured in *global* space: the header
+    /// slides up under the finger as the sheet grows, and a local measurement would
+    /// feed that movement back into the translation — the source of the jitter at
+    /// in-between positions.
+    private func sheetDragGesture(height: CGFloat) -> some Gesture {
+        DragGesture(coordinateSpace: .global)
+            .updating($sheetDrag) { value, state, _ in state = value.translation.height }
+            .onEnded { value in
+                let target = sheetDetent.height(in: height) - value.translation.height
+                sheetDetent = SheetDetent.allCases.min {
+                    abs($0.height(in: height) - target) < abs($1.height(in: height) - target)
+                } ?? .medium
+            }
+    }
+
+    /// The collapsed sheet: the title pill floating at the bottom. Tap it, or swipe
+    /// it up, to bring the details back. It's the same pill as the sheet's header,
+    /// so minimizing / restoring morphs between the two positions.
+    private var minimizedPill: some View {
+        titlePill(minimized: true)
+            .padding(.bottom, 10)
+            .contentShape(.capsule)
+            .onTapGesture { sheetDetent = .medium }
+            .gesture(
+                DragGesture().onEnded { value in
+                    if value.translation.height < -24 { sheetDetent = .medium }
+                }
+            )
+    }
+
+    /// The trip's title as a liquid-glass pill — mode icon, the "Flight" / "Trip" /
+    /// "Connection" label, and the route codes. While underway it carries a live
+    /// pulse and the current headline instead, so the minimized pill still tells
+    /// you what's happening. Shares a matchedGeometry id so it morphs between the
+    /// header and the minimized position.
+    private func titlePill(minimized: Bool) -> some View {
+        let live = liveStatus
+        return HStack(spacing: 10) {
+            if let live {
+                LiveDot(color: live.tint)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(live.headline)
+                        .font(.subheadline.weight(.bold))
+                        .lineLimit(1)
+                    Text("\(trip.startPlace.codeLabel) → \(trip.endPlace.codeLabel)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            } else {
+                Image(systemName: trip.type.symbol)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(trip.type.accent)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(navigationTitle)
+                        .font(.headline.weight(.heavy))
+                        .lineLimit(1)
+                    Text("\(trip.startPlace.codeLabel) → \(trip.endPlace.codeLabel)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            if minimized {
+                Image(systemName: "chevron.up")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 2)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .glassEffect(.regular, in: .capsule)
+        .matchedGeometryEffect(id: "titlePill", in: pillNamespace)
+    }
+
+    /// The relative-time / completed pill on the right of the header — hidden while
+    /// underway, since the pinned live card already carries a status.
+    @ViewBuilder
+    private var statusPill: some View {
+        if !isUnderway {
+            Text(trip.isPast ? "Completed" : Format.relative(trip.startDate))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(trip.isPast ? .secondary : trip.type.accent)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background((trip.isPast ? Color.secondary : trip.type.accent).opacity(0.15),
+                            in: .capsule)
+        }
+    }
+
+    /// A right-indented shortcut beside the title bubble for the leg happening now:
+    /// driving directions in Apple Maps while on the road, boarding passes in
+    /// Wallet while it's a flight. Only shown while that leg is active.
+    @ViewBuilder
+    private var activeShortcut: some View {
+        if let leg = liveStatus?.focusSegment {
+            switch leg.type {
+            case .roadTrip:
+                shortcutButton("arrow.triangle.turn.up.right.diamond.fill", tint: leg.type.accent) {
+                    MapsLauncher.openDirections(from: leg.origin, to: leg.destination)
+                }
+            case .flight:
+                shortcutButton("wallet.pass.fill", tint: leg.type.accent) {
+                    WalletLauncher.openBoardingPasses()
+                }
+            default:
+                EmptyView()
+            }
+        }
+    }
+
+    /// A liquid-glass icon button sized to sit level with the title pill.
+    private func shortcutButton(_ icon: String, tint: Color,
+                                action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(tint)
+                .frame(width: 46, height: 46)
+                .glassEffect(.regular, in: .circle)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Itinerary
+
+    private var itinerary: some View {
+        VStack(spacing: 16) {
+            if trip.isMultiModal {
+                SectionTitle(title: "Itinerary", systemImage: "list.bullet",
+                             tint: trip.type.accent)
+            }
+            ForEach(Array(trip.displaySegments.enumerated()), id: \.element.id) { idx, segment in
+                TripLegCard(trip: trip, index: idx, segment: segment,
+                            records: statusRecords.filter { $0.segmentID == segment.id },
+                            expanded: $expandedLegs)
+                    .appear(idx)
+                if let pair = trip.connectionPairs.first(where: { $0.inbound.id == segment.id }) {
+                    ConnectionCardView(inbound: pair.inbound, outbound: pair.outbound)
+                        .appear(idx)
+                }
+            }
+        }
+    }
+
+    private func notesCard(_ notes: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionTitle(title: "Notes", systemImage: "note.text", tint: trip.type.accent)
+            Text(notes).font(.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .glassCard()
+        }
+    }
+
+    // MARK: Derived state
+
+    private var isUnderway: Bool { liveStatus != nil }
+
+    /// The live reading for this trip, or nil when it isn't happening right now.
+    private var liveStatus: TripStatus? {
+        TripStatus(trip: trip, records: statusRecords)
     }
 
     /// Auto-expand the legs most worth seeing on open: the next/active flight, any
@@ -113,40 +493,6 @@ struct TripDetailView: View {
             }
         }
         if changed { try? context.save() }
-    }
-
-    // MARK: Itinerary
-
-    private var itinerary: some View {
-        VStack(spacing: 16) {
-            if trip.isMultiModal {
-                SectionTitle(title: "Itinerary", systemImage: "list.bullet",
-                             tint: trip.type.accent)
-            }
-            ForEach(Array(trip.displaySegments.enumerated()), id: \.element.id) { idx, segment in
-                TripLegCard(trip: trip, index: idx, segment: segment,
-                            records: statusRecords.filter { $0.segmentID == segment.id },
-                            expanded: $expandedLegs)
-                if let pair = trip.connectionPairs.first(where: { $0.inbound.id == segment.id }) {
-                    ConnectionCardView(inbound: pair.inbound, outbound: pair.outbound)
-                }
-            }
-        }
-    }
-
-    private func notesCard(_ notes: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionTitle(title: "Notes", systemImage: "note.text", tint: trip.type.accent)
-            Text(notes).font(.body)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .glassCard()
-        }
-    }
-
-    // MARK: Derived state
-
-    private var isUnderway: Bool {
-        TripStatus(trip: trip, records: statusRecords) != nil
     }
 
     /// The flight leg a traveler most likely cares about now: the next unfinished
@@ -186,48 +532,26 @@ struct TripDetailView: View {
     }
 }
 
-/// Small non-interactive map showing every leg of the trip.
-struct RouteMapView: View {
-    let trip: Trip
-
-    private var segments: [TripSegment] { trip.displaySegments }
+/// A small breathing dot marking a live reading, sized for the title pill.
+private struct LiveDot: View {
+    let color: Color
+    @State private var expanded = false
 
     var body: some View {
-        Map(initialPosition: .region(region)) {
-            if let first = segments.first {
-                Marker(first.origin.displayName, systemImage: "circle.circle",
-                       coordinate: first.origin.coordinate)
-                    .tint(.gray)
-            }
-            ForEach(segments) { segment in
-                MapPolyline(coordinates: [segment.origin.coordinate, segment.destination.coordinate])
-                    .stroke(segment.type.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [2, 6]))
-                Marker(segment.destination.displayName, systemImage: segment.type.symbol,
-                       coordinate: segment.destination.coordinate)
-                    .tint(segment.type.accent)
+        ZStack {
+            Circle()
+                .fill(color.opacity(0.25))
+                .frame(width: 22, height: 22)
+                .scaleEffect(expanded ? 1 : 0.5)
+                .opacity(expanded ? 0 : 1)
+            Circle().fill(color).frame(width: 9, height: 9)
+        }
+        .frame(width: 22, height: 22)
+        .onAppear {
+            withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) {
+                expanded = true
             }
         }
-        .mapStyle(.standard(elevation: .realistic))
-        .disabled(true)
-    }
-
-    private var coords: [CLLocationCoordinate2D] {
-        segments.flatMap { [$0.origin.coordinate, $0.destination.coordinate] }
-    }
-
-    private var region: MKCoordinateRegion {
-        let all = coords.isEmpty ? [CLLocationCoordinate2D(latitude: 0, longitude: 0)] : coords
-        let lats = all.map(\.latitude)
-        let lons = all.map(\.longitude)
-        let center = CLLocationCoordinate2D(
-            latitude: (lats.min()! + lats.max()!) / 2,
-            longitude: (lons.min()! + lons.max()!) / 2
-        )
-        let span = MKCoordinateSpan(
-            latitudeDelta: max((lats.max()! - lats.min()!) * 1.6, 0.5),
-            longitudeDelta: max((lons.max()! - lons.min()!) * 1.6, 0.5)
-        )
-        return MKCoordinateRegion(center: center, span: span)
     }
 }
 
