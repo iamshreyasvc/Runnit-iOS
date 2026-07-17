@@ -80,6 +80,20 @@ struct TripDetailView: View {
         }
         .onAppear(perform: expandKeyLegs)
         .task { await backfillTimeZones() }
+        // Adding a stop re-plans the route, and the new one is often outside the
+        // old frame — a stop added mid-drive reads as nothing having happened if
+        // the map keeps its previous camera. Re-fit whenever the route changes,
+        // from this page's own rail or from the Edit Trip sheet.
+        .onChange(of: routePlaces) { _, _ in
+            withAnimation(.smooth(duration: 0.45)) { camera = .automatic }
+        }
+    }
+
+    /// Every place the trip passes through, in order: each leg's origin, its
+    /// stops, its destination. Changes whenever a stop or leg is added, edited,
+    /// reordered, or removed.
+    private var routePlaces: [Place] {
+        trip.displaySegments.flatMap(\.routePlaces)
     }
 
     private var toolbarMenu: some ToolbarContent {

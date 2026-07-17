@@ -57,6 +57,12 @@ struct AddEditTripView: View {
     private var isEditing: Bool { trip != nil }
     private var canSave: Bool { !legs.isEmpty && legs.allSatisfy(\.isComplete) }
 
+    /// Whether anything on the page can be dragged into a new order — several
+    /// legs, or a drive with several stops.
+    private var isReorderable: Bool {
+        legs.count > 1 || legs.contains { $0.type == .roadTrip && $0.stops.count > 1 }
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -78,7 +84,7 @@ struct AddEditTripView: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .topBarLeading) {
-                    if legs.count > 1 { EditButton() }
+                    if isReorderable { EditButton() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { save() }
@@ -199,6 +205,9 @@ struct AddEditTripView: View {
                     .listRowBackground(rowBackground)
                 }
                 .onDelete { legs[idx].stops.remove(atOffsets: $0) }
+                // Stops are stored in travel order, so dragging them re-plans the
+                // drive: the map route and distance follow the new order.
+                .onMove { legs[idx].stops.move(fromOffsets: $0, toOffset: $1) }
 
                 Button {
                     stopEditTarget = .new(legIndex: idx)
@@ -211,6 +220,8 @@ struct AddEditTripView: View {
             } footer: {
                 if leg.stops.isEmpty {
                     Text("Add food, gas, or scenic stops along this drive.")
+                } else if leg.stops.count > 1 {
+                    Text("Listed in the order you'll drive them. Tap to edit, swipe to remove, or tap Edit to drag them into a new order.")
                 } else {
                     Text("Tap a stop to edit it, or swipe to remove.")
                 }
