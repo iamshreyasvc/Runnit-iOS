@@ -179,8 +179,20 @@ final class Trip {
     /// The moment the trip is "done" — last leg's arrival, else its departure.
     var endDate: Date { displaySegments.last?.endDate ?? (arrivalDate ?? departureDate) }
 
-    var isPast: Bool { endDate < Date() }
+    var isPast: Bool { isPast(now: Date()) }
     var isUpcoming: Bool { !isPast }
+
+    /// Whether the trip is over. A final leg entered without an arrival (an
+    /// open-ended drive, a flight added without times) is assumed to run for
+    /// `TripStatus.openEndedDuration` rather than ending the instant it departs —
+    /// otherwise a trip would file itself under Past while it's still happening.
+    func isPast(now: Date) -> Bool {
+        var end = endDate
+        if displaySegments.last?.arrivalDate == nil {
+            end = end.addingTimeInterval(TripStatus.openEndedDuration)
+        }
+        return end < now
+    }
 
     /// Total distance across all legs.
     var distanceMeters: Double {

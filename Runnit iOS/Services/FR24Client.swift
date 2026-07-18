@@ -157,6 +157,22 @@ nonisolated struct FR24TrackPoint: Decodable, Equatable, Sendable {
     let track: Double?
 }
 
+/// The `flight-tracks` response body. Unlike every other list endpoint, this one
+/// is NOT wrapped in `{"data": ...}` — the top level is a plain JSON array.
+/// Decoded leniently (array first, envelope as a fallback) so a change in the
+/// wrapping can't silently break the flown-track map again.
+nonisolated struct FR24TracksPayload: Decodable {
+    let groups: [FR24TrackGroup]
+
+    init(from decoder: Decoder) throws {
+        if let list = try? [FR24TrackGroup](from: decoder) {
+            groups = list
+        } else {
+            groups = try FR24Envelope<FR24TrackGroup>(from: decoder).data ?? []
+        }
+    }
+}
+
 // MARK: - Client
 
 /// `nonisolated` throughout: the project defaults types to `@MainActor`, and a
@@ -211,11 +227,11 @@ nonisolated struct FR24Client {
     /// track for it. This is the endpoint that turns a straight airport-to-airport
     /// line into the real flown path — including historical flights.
     func flightTracks(flightID: String) async throws -> [FR24TrackPoint] {
-        let envelope: FR24Envelope<FR24TrackGroup> = try await get(
+        let payload: FR24TracksPayload = try await get(
             "/flight-tracks",
             query: [URLQueryItem(name: "flight_id", value: flightID)]
         )
-        return envelope.data?.first?.tracks ?? []
+        return payload.groups.first?.tracks ?? []
     }
 
     // MARK: Transport

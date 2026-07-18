@@ -115,6 +115,39 @@ struct FR24Tests {
         #expect(s.flightEnded == true)
     }
 
+    /// `flight-tracks` is the one list endpoint NOT wrapped in `{"data": ...}` —
+    /// the top level is a plain JSON array. Decoding it as an envelope is exactly
+    /// what silently turned every flight map into a straight line.
+    @Test func decodesTopLevelArrayTracksPayload() throws {
+        let json = Data("""
+        [{"fr24_id":"34242a02","tracks":[
+            {"timestamp":"2023-10-30T11:44:43Z","lat":52.36,"lon":4.71,"alt":0,
+             "gspeed":2,"vspeed":0,"track":71,"squawk":"0","callsign":"KLM77T","source":"ADSB"},
+            {"timestamp":"2023-10-30T11:46:43Z","lat":52.40,"lon":4.78,"alt":2000,
+             "gspeed":150,"vspeed":1200,"track":74,"squawk":"0","callsign":"KLM77T","source":"ADSB"}
+        ]}]
+        """.utf8)
+
+        let payload = try JSONDecoder().decode(FR24TracksPayload.self, from: json)
+        #expect(payload.groups.first?.fr24ID == "34242a02")
+        #expect(payload.groups.first?.tracks?.count == 2)
+        #expect(payload.groups.first?.tracks?.first?.lat == 52.36)
+    }
+
+    /// If FR24 ever moves the endpoint to the standard envelope, decoding must
+    /// keep working rather than break the map again.
+    @Test func decodesEnvelopeWrappedTracksPayloadToo() throws {
+        let json = Data("""
+        {"data":[{"fr24_id":"34242a02","tracks":[
+            {"timestamp":"2023-10-30T11:44:43Z","lat":1.5,"lon":2.5,"alt":100,
+             "gspeed":90,"vspeed":0,"track":10,"squawk":"0","source":"ADSB"}]}]}
+        """.utf8)
+
+        let payload = try JSONDecoder().decode(FR24TracksPayload.self, from: json)
+        #expect(payload.groups.first?.tracks?.count == 1)
+        #expect(payload.groups.first?.tracks?.first?.lon == 2.5)
+    }
+
     /// The airport endpoint exists solely to learn what clock an airport runs on.
     @Test func decodesAirportTimezone() throws {
         let json = Data("""
@@ -161,6 +194,93 @@ struct FR24Tests {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let ancient = flight(departs: Date(timeIntervalSince1970: 1_600_000_000)) // 2020
         #expect(FlightTracker.isWithinTrackingReach(ancient, now: now) == false)
+    }
+
+    // MARK: Live-position window
+
+    /// Live rows are keyed by flight number with no date. Asking about a past
+    /// leg would return *today's* operation of the number — the "refreshing a
+    /// past flight shows today's flight" bug — so the tracker must not ask.
+    @Test func pastFlightIsNotPlausiblyAirborne() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let departs = now.addingTimeInterval(-30 * 24 * 3600)
+        let lastMonth = flight(departs: departs, arrives: departs.addingTimeInterval(6 * 3600))
+        #expect(FlightTracker.couldBeAirborneNow(lastMonth, now: now) == false)
+    }
+
+    @Test func flightInItsWindowIsPlausiblyAirborne() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let seg = flight(departs: now.addingTimeInterval(-2 * 3600),
+                         arrives: now.addingTimeInterval(3 * 3600))
+        #expect(FlightTracker.couldBeAirborneNow(seg, now: now))
+    }
+
+    /// Delay slack: a flight hours past its planned arrival may still be up.
+    @Test func recentlyOverdueFlightIsStillPlausiblyAirborne() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let seg = flight(departs: now.addingTimeInterval(-10 * 3600),
+                         arrives: now.addingTimeInterval(-4 * 3600))
+        #expect(FlightTracker.couldBeAirborneNow(seg, now: now))
+    }
+
+    @Test func yesterdaysArrivalIsNotPlausiblyAirborne() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let seg = flight(departs: now.addingTimeInterval(-30 * 3600),
+                         arrives: now.addingTimeInterval(-24 * 3600))
+        #expect(FlightTracker.couldBeAirborneNow(seg, now: now) == false)
+    }
+
+    @Test func tomorrowsFlightIsNotPlausiblyAirborne() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let seg = flight(departs: now.addingTimeInterval(24 * 3600))
+        #expect(FlightTracker.couldBeAirborneNow(seg, now: now) == false)
+    }
+
+    // MARK: Summary matching
+
+    private func summary(id: String, firstSeenOffsetHours: Double,
+                         from target: Date) -> FR24Summary {
+        let seen = target.addingTimeInterval(firstSeenOffsetHours * 3600)
+        return FR24Summary(
+            fr24ID: id, flight: "UA1290", operatingAs: "UAL", paintedAs: "UAL",
+            origIata: "ORD", destIata: "JFK", destIataActual: "JFK",
+            datetimeTakeoff: FR24Date.query(seen.addingTimeInterval(20 * 60)),
+            datetimeLanded: nil,
+            firstSeen: FR24Date.query(seen), lastSeen: nil, flightEnded: false
+        )
+    }
+
+    /// The matching window is asymmetric: delays push a real operation hours
+    /// *later*, but a flight does not leave hours early — an operation seen long
+    /// before the planned time is a different rotation of the same number, and
+    /// matching it froze another flight's landed data onto the leg.
+    @Test func earlierRotationOfTheSameNumberIsRejected() {
+        let target = Date(timeIntervalSince1970: 1_800_000_000)
+        let identity = FlightIdentity(flightIata: "UA1290", departureIata: nil, arrivalIata: nil)
+        let tracker = FlightTracker()
+
+        let earlyRotation = summary(id: "early", firstSeenOffsetHours: -8, from: target)
+        let booked = summary(id: "booked", firstSeenOffsetHours: -0.5, from: target)
+
+        // With both on offer, the booked operation wins.
+        let best = tracker.bestSummary([earlyRotation, booked], identity: identity, target: target)
+        #expect(best?.fr24ID == "booked")
+
+        // With only the earlier rotation available, "no data" beats wrong data.
+        #expect(tracker.bestSummary([earlyRotation], identity: identity, target: target) == nil)
+    }
+
+    @Test func delayedOperationIsStillAccepted() {
+        let target = Date(timeIntervalSince1970: 1_800_000_000)
+        let identity = FlightIdentity(flightIata: "UA1290", departureIata: nil, arrivalIata: nil)
+        let tracker = FlightTracker()
+
+        let delayed = summary(id: "delayed", firstSeenOffsetHours: 5, from: target)
+        #expect(tracker.bestSummary([delayed], identity: identity, target: target)?.fr24ID == "delayed")
+
+        // Yesterday's run stays out of reach on the late side too.
+        let yesterday = summary(id: "yesterday", firstSeenOffsetHours: -24, from: target)
+        #expect(tracker.bestSummary([yesterday], identity: identity, target: target) == nil)
     }
 
     // MARK: Applying a snapshot
@@ -288,6 +408,30 @@ struct FR24Tests {
 
         #expect(record.isFinal)
         #expect(record.isDisplayable(for: seg, now: now))
+    }
+
+    /// Displayability is judged by the snapshot's age, not its calendar day: a
+    /// same-day rule hid a fresh mid-flight snapshot at the stroke of midnight.
+    @Test func freshSnapshotIsDisplayableRegardlessOfCalendarDay() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let seg = flight(departs: now.addingTimeInterval(-3 * 3600))
+
+        let record = FlightStatusRecord(segmentID: seg.id)
+        record.statusRaw = FlightPhase.active.rawValue
+        record.fetchedAt = now.addingTimeInterval(-20 * 60)
+
+        #expect(record.isDisplayable(for: seg, now: now))
+    }
+
+    @Test func staleNonFinalSnapshotIsNotDisplayable() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let seg = flight(departs: now.addingTimeInterval(-3 * 3600))
+
+        let record = FlightStatusRecord(segmentID: seg.id)
+        record.statusRaw = FlightPhase.scheduled.rawValue
+        record.fetchedAt = now.addingTimeInterval(-13 * 3600)
+
+        #expect(record.isDisplayable(for: seg, now: now) == false)
     }
 
     /// A negative cache must never drive the UI.

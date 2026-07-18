@@ -167,4 +167,76 @@ struct TripStatusTests {
 
         #expect(status(trip)?.phase == .inTransit(train))
     }
+
+    // MARK: Past / Upcoming classification
+
+    /// A flight added without an arrival time used to flip to "Past" the moment
+    /// it departed — filing a trip that's in the air under the Past tab.
+    @Test("A trip with no arrival time is not past the moment it departs")
+    func openEndedTripIsNotPastAtDeparture() {
+        let trip = Trip.make(segments: [
+            flight(from: .sfo, to: .jfk, departs: hours(-1), arrives: nil)
+        ])
+        #expect(trip.isPast(now: Self.now) == false)
+    }
+
+    @Test("An open-ended trip settles once the assumed duration has run out")
+    func openEndedTripSettlesEventually() {
+        let trip = Trip.make(segments: [
+            flight(from: .sfo, to: .jfk, departs: hours(-5), arrives: nil)
+        ])
+        #expect(trip.isPast(now: Self.now))
+    }
+
+    @Test("A trip with a known arrival is past once that arrival passes")
+    func arrivedTripIsPast() {
+        let trip = Trip.make(segments: [
+            flight(from: .sfo, to: .jfk, departs: hours(-8), arrives: hours(-1))
+        ])
+        #expect(trip.isPast(now: Self.now))
+    }
+
+    /// The tab filter's second gate: even when the planned times say "past", a
+    /// live record showing the flight still in the air keeps the trip active —
+    /// TripStatus stays non-nil, and the Past tab must not claim it.
+    @Test("A delayed flight past its booked arrival still reads as under way")
+    func delayedFlightPastBookedArrivalIsStillLive() {
+        let leg = flight(from: .sfo, to: .jfk, departs: hours(-7), arrives: hours(-1))
+        let trip = Trip.make(segments: [leg])
+
+        let record = FlightStatusRecord(segmentID: leg.id)
+        record.statusRaw = FlightPhase.active.rawValue
+        record.fetchedAt = Self.now
+        record.arrEstimated = hours(1)   // running two hours late, still airborne
+
+        #expect(trip.isPast(now: Self.now))                    // planned times say over…
+        #expect(status(trip, records: [record]) != nil)        // …but the flight is live
+    }
+
+    /// The mirror image: a leg that already landed is over, even though the
+    /// booked arrival is still hours away — it must never sit under Upcoming.
+    @Test("A landed leg ends the trip before its booked arrival")
+    func landedRecordEndsTheTripEarly() {
+        let leg = flight(from: .sfo, to: .jfk, departs: hours(-7), arrives: hours(4))
+        let trip = Trip.make(segments: [leg])
+
+        let record = FlightStatusRecord(segmentID: leg.id)
+        record.statusRaw = FlightPhase.landed.rawValue
+        record.isFinal = true
+        record.depActual = hours(-7)
+        record.arrActual = hours(-3)
+        record.fetchedAt = hours(-3)
+
+        // The effective end is the actual landing, not the booked arrival…
+        #expect(TripStatus.effectiveEnd(of: trip, records: [record], now: Self.now) == hours(-3))
+        // …and the trip is past its settle window, so nothing reads as live.
+        #expect(status(trip, records: [record]) == nil)
+    }
+
+    @Test("Without records the effective end is the planned end")
+    func effectiveEndFallsBackToPlan() {
+        let leg = flight(from: .sfo, to: .jfk, departs: hours(2), arrives: hours(8))
+        let trip = Trip.make(segments: [leg])
+        #expect(TripStatus.effectiveEnd(of: trip, records: [], now: Self.now) == hours(8))
+    }
 }
