@@ -15,7 +15,7 @@ import SwiftData
 
 private enum WizardStep: Hashable {
     // Per-leg questions
-    case type, flightLookup, origin, destination, when, carrier, number, details, itinerary
+    case type, flightLookup, trainCountry, trainLookup, origin, destination, when, carrier, number, details, itinerary
     // Trip-level finish
     case name, notes, review
 }
@@ -68,6 +68,9 @@ struct AddTripFlowView: View {
     @State private var lookingUp = false
     @State private var lookupMessage: String?
     @State private var lookupApplied = false
+    /// For a train leg: whether it's an Indian Railways service (only those can be
+    /// auto-filled from erail). `nil` until asked.
+    @State private var isIndianTrain: Bool?
 
     @AppStorage(PrefKey.appearance) private var appearanceRaw = AppAppearance.dark.rawValue
 
@@ -79,6 +82,13 @@ struct AddTripFlowView: View {
         // Flights start with a number+date lookup that can auto-fill the rest;
         // the manual steps stay available behind "Enter details manually".
         if draft.type == .flight { s += [.flightLookup] }
+        // Trains first ask whether they're an Indian Railways service; only those
+        // can be auto-filled from a number, so the lookup step is gated on a "yes".
+        // The manual steps stay available behind "Enter details manually".
+        if draft.type == .train {
+            s += [.trainCountry]
+            if isIndianTrain == true { s += [.trainLookup] }
+        }
         s += [.origin, .destination, .when]
         s += draft.type.isScheduledTransit ? [.carrier, .number, .details] : []
         s += [.itinerary]
@@ -195,7 +205,7 @@ struct AddTripFlowView: View {
     private var footer: some View {
         // The itinerary and flight-lookup steps have their own action buttons;
         // every other step gets a standard Continue / Save.
-        if step != .itinerary && step != .flightLookup {
+        if step != .itinerary && step != .flightLookup && step != .trainLookup && step != .trainCountry {
             Button {
                 isReview ? save() : next()
             } label: {
@@ -218,6 +228,8 @@ struct AddTripFlowView: View {
         switch step {
         case .type:        typeInput
         case .flightLookup: flightLookupInput
+        case .trainCountry: trainCountryInput
+        case .trainLookup: trainLookupInput
         case .origin:      placeInput($draft.origin, icon: "location.circle.fill")
         case .destination: placeInput($draft.destination, icon: "mappin.circle.fill")
         case .when:        whenInput
@@ -453,7 +465,7 @@ struct AddTripFlowView: View {
 
     private var lookupResultCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Flight found", systemImage: "checkmark.seal.fill")
+            Label(draft.type == .train ? "Train found" : "Flight found", systemImage: "checkmark.seal.fill")
                 .font(.headline).foregroundStyle(.green)
             if let o = draft.origin, let d = draft.destination {
                 Text("\(o.displayName) → \(d.displayName)")
@@ -513,6 +525,142 @@ struct AddTripFlowView: View {
         lookupMessage = nil
         lookupApplied = false
         lookingUp = false
+        isIndianTrain = nil
+    }
+
+    // MARK: Train country step
+
+    /// Two choices: Indian Railways (unlocks the number look-up) or any other
+    /// railway (goes straight to manual entry).
+    private var trainCountryInput: some View {
+        VStack(spacing: 12) {
+            trainCountryOption(
+                title: "Indian Railways",
+                blurb: "Auto-fill stations and times from the train number.",
+                symbol: "sparkle.magnifyingglass",
+                selected: isIndianTrain == true
+            ) {
+                isIndianTrain = true
+                next()
+            }
+            trainCountryOption(
+                title: "Another railway",
+                blurb: "Enter the details yourself.",
+                symbol: "square.and.pencil",
+                selected: isIndianTrain == false
+            ) {
+                isIndianTrain = false
+                next()
+            }
+        }
+    }
+
+    private func trainCountryOption(
+        title: String, blurb: String, symbol: String, selected: Bool, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 16) {
+                Image(systemName: symbol)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(TripType.train.accent)
+                    .frame(width: 52, height: 52)
+                    .background(TripType.train.accent.opacity(0.16), in: .rect(cornerRadius: 15))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.headline)
+                    Text(blurb).font(.subheadline).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: selected ? "checkmark.circle.fill" : "chevron.right")
+                    .font(selected ? .title3 : .subheadline.weight(.semibold))
+                    .foregroundStyle(selected ? AnyShapeStyle(accent) : AnyShapeStyle(.tertiary))
+            }
+            .padding(14)
+            .glassEffect(.regular, in: .rect(cornerRadius: 20))
+            .overlay {
+                RoundedRectangle(cornerRadius: 20)
+                    .strokeBorder(accent.opacity(selected ? 0.7 : 0), lineWidth: 1.5)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Train lookup step
+
+    @ViewBuilder
+    private var trainLookupInput: some View {
+        VStack(spacing: 16) {
+            bigField($lookupNumber, placeholder: "Train number (e.g. 12608)")
+                .keyboardType(.numberPad)
+
+            DatePicker("Travel date", selection: $draft.departureDate, displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .tint(accent)
+                .padding()
+                .glassEffect(.regular, in: .rect(cornerRadius: 22))
+
+            if lookingUp {
+                HStack(spacing: 10) {
+                    ProgressView().tint(accent)
+                    Text("Looking up your train…").foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding()
+                .glassEffect(.regular, in: .rect(cornerRadius: 18))
+            } else if lookupApplied {
+                lookupResultCard
+                Button { goToItinerary() } label: {
+                    Text("Continue").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
+                }
+                .buttonStyle(.glassProminent).tint(accent)
+            } else {
+                Button { Task { await runWizardTrainLookup() } } label: {
+                    Label("Look up train", systemImage: "sparkle.magnifyingglass")
+                        .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
+                }
+                .buttonStyle(.glassProminent).tint(accent)
+                .disabled(lookupNumber.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                if let msg = lookupMessage {
+                    Text(msg).font(.callout).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            Button { next() } label: {
+                Text(lookupApplied ? "Edit details manually" : "Enter details manually")
+                    .font(.subheadline.weight(.medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .padding(.top, 4)
+        }
+    }
+
+    private func runWizardTrainLookup() async {
+        lookingUp = true
+        lookupMessage = nil
+        let outcome = await TrainAutofill.run(trainNumber: lookupNumber, date: draft.departureDate)
+        lookingUp = false
+
+        guard case .filled(let f) = outcome else {
+            lookupMessage = outcome.message
+            return
+        }
+        if let o = f.origin { draft.origin = o }
+        if let d = f.destination { draft.destination = d }
+        if !f.trainName.isEmpty { draft.operatorName = f.trainName }
+        draft.vehicleNumber = f.trainNumber.isEmpty ? lookupNumber : f.trainNumber
+        if let dep = f.departure { draft.departureDate = dep }
+        if let arr = f.arrival { draft.hasArrival = true; draft.arrivalDate = arr }
+
+        if draft.origin != nil, draft.destination != nil {
+            lookupApplied = true
+            if !f.runsOnDate {
+                lookupMessage = "Heads up: this train doesn't run on the selected date."
+            }
+        } else {
+            lookupMessage = "Found the train, but couldn't place the stations on the map. Continue manually to set them."
+        }
     }
 
     // MARK: Itinerary step
@@ -765,6 +913,8 @@ extension AddTripFlowView {
         switch step {
         case .type:        return legs.isEmpty ? "Plan a new trip" : "Add another leg"
         case .flightLookup: return "What's your flight?"
+        case .trainCountry: return "Is this an Indian train?"
+        case .trainLookup: return "What's your train?"
         case .origin:      return "Where are you starting?"
         case .destination: return "And where to?"
         case .when:        return "When do you leave?"
@@ -782,6 +932,8 @@ extension AddTripFlowView {
         switch step {
         case .type:        return legs.isEmpty ? "Start with your first leg — how are you travelling?" : "How are you travelling this leg?"
         case .flightLookup: return "Enter your flight number and date — we'll fill in the rest."
+        case .trainCountry: return "Indian Railways trains can be auto-filled from their number."
+        case .trainLookup: return "Enter your Indian Railways train number and date — we'll fill in the rest."
         case .origin:      return legs.isEmpty ? "Search an airport, station, city, or address." : "Starts where your last leg ended — change it if you like."
         case .destination: return "Where this leg ends."
         case .when:        return "Pick your departure — add an arrival if you know it."
