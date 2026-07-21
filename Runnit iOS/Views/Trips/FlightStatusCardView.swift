@@ -4,9 +4,10 @@
 //
 //  Live flight status for a single .flight leg, backed by a cached
 //  FlightStatusRecord and refreshed through FlightTracker (never directly).
-//  Adapts to phase: in-air (live map + altitude/speed), landed (actual times +
-//  "Landed"), and not-yet-flown. Degrades gracefully when there's no token, no
-//  flight number, or no data — always without surprise API calls.
+//  Adapts to phase: in-air (altitude/speed/heading telemetry — the live
+//  aircraft itself rides the trip's own map), landed (actual times + "Landed"),
+//  and not-yet-flown. Degrades gracefully when there's no token, no flight
+//  number, or no data — always without surprise API calls.
 //
 //  Flightradar24 carries no gate, terminal, or baggage data, so those chips only
 //  ever render from what the user typed on the leg. "Delay" is derived: actual
@@ -15,7 +16,6 @@
 
 import SwiftUI
 import SwiftData
-import MapKit
 
 struct FlightStatusCardView: View {
     let segment: TripSegment
@@ -203,15 +203,11 @@ struct FlightStatusCardView: View {
         }
     }
 
-    // In the air: live map + telemetry.
+    // In the air: telemetry. The live aircraft and its travelled track are drawn
+    // on the trip's own map, not duplicated in a second map here.
     @ViewBuilder
     private func liveBody(_ r: FlightStatusRecord) -> some View {
         VStack(spacing: 12) {
-            if let coord = r.liveCoordinate {
-                liveMap(coord: coord, heading: r.liveDirection ?? 0)
-                    .frame(height: 150)
-                    .clipShape(.rect(cornerRadius: 16))
-            }
             HStack(spacing: 12) {
                 telemetry("Altitude", altitudeText(r.liveAltitude), "arrow.up.to.line")
                 telemetry("Ground speed", speedText(r.liveSpeed), "gauge.with.dots.needle.67percent")
@@ -229,23 +225,6 @@ struct FlightStatusCardView: View {
                         delay: r.arrDelayMinutes, baggage: r.arrBaggage,
                         zone: arrZone(r))
         }
-    }
-
-    private func liveMap(coord: CLLocationCoordinate2D, heading: Double) -> some View {
-        Map(initialPosition: .region(MKCoordinateRegion(
-            center: coord,
-            span: MKCoordinateSpan(latitudeDelta: 6, longitudeDelta: 6)
-        ))) {
-            Annotation("", coordinate: coord) {
-                Image(systemName: "airplane")
-                    .font(.title3)
-                    .foregroundStyle(accent)
-                    .rotationEffect(.degrees(heading - 90))
-                    .shadow(radius: 3)
-            }
-        }
-        .mapStyle(.standard(elevation: .flat))
-        .disabled(true)
     }
 
     // MARK: Footer
@@ -441,6 +420,8 @@ struct FlightStatusChip: View {
         switch r.phase {
         case .landed:    return ("Landed", .green)
         case .cancelled: return ("Cancelled", .red)
+        case .diverted:  return ("Diverted", .orange)
+        case .incident:  return ("Incident", .red)
         case .active:    return ("In the air", segment.type.accent)
         default:
             if let d = r.depDelayMinutes, d > 0 { return ("Delayed \(d)m", .orange) }

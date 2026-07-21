@@ -11,6 +11,7 @@ import SwiftUI
 import SwiftData
 import MapKit
 import CoreLocation
+import Combine
 
 enum TripFilter: String, CaseIterable, Identifiable {
     case upcoming = "Upcoming"
@@ -25,6 +26,7 @@ enum TripFilter: String, CaseIterable, Identifiable {
 struct TripsListView: View {
     let filter: TripFilter
 
+    @Environment(\.modelContext) private var context
     @Query(sort: \Trip.departureDate, order: .forward) private var allTrips: [Trip]
     @Query private var statusRecords: [FlightStatusRecord]
     @State private var showingAdd = false
@@ -45,6 +47,12 @@ struct TripsListView: View {
     @State private var location = LocationProvider()
     @State private var currentCamera: MapCamera?
     @Namespace private var pillNamespace
+
+    /// The clock this tab classifies against. Ticked every minute so a trip that
+    /// crosses its (effective) end while the screen is open migrates between
+    /// Upcoming and Past on its own — no interaction required.
+    @State private var now = Date()
+    private let clock = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
     /// How tall the trip sheet rests. `minimized` collapses it to a floating
     /// pill; the rest is exposed, fully-interactive map.
@@ -68,9 +76,20 @@ struct TripsListView: View {
     /// Trips for this tab (before the year filter).
     private var shown: [Trip] {
         switch filter {
-        case .upcoming: return allTrips.filter(\.isUpcoming).sorted { $0.startDate < $1.startDate }
-        case .past:     return allTrips.filter(\.isPast).sorted { $0.startDate > $1.startDate }
+        case .upcoming: return allTrips.filter { !isSettled($0) }.sorted { $0.startDate < $1.startDate }
+        case .past:     return allTrips.filter(isSettled).sorted { $0.startDate > $1.startDate }
         }
+    }
+
+    /// A trip files under Past only once it is actually over, judged on its
+    /// *effective* end — live records can push it later (a delayed flight is
+    /// still in the air after its booked arrival: never Past) or pull it earlier
+    /// (a leg that already landed is over even if the booked arrival hasn't
+    /// come round: never Upcoming). While `TripStatus` says the trip is
+    /// happening it always stays on Upcoming, where the live card lives.
+    private func isSettled(_ trip: Trip) -> Bool {
+        guard TripStatus(trip: trip, records: statusRecords, now: now) == nil else { return false }
+        return TripStatus.effectiveEnd(of: trip, records: statusRecords, now: now) < now
     }
 
     /// Distinct years present in this tab, ordered soonest-first for Upcoming
@@ -89,7 +108,7 @@ struct TripsListView: View {
     /// Whether anything is live right now. Checked here as well as inside the box
     /// so an inactive box contributes no stack spacing to the list.
     private var hasActiveTrip: Bool {
-        shown.contains { TripStatus(trip: $0, records: statusRecords) != nil }
+        shown.contains { TripStatus(trip: $0, records: statusRecords, now: now) != nil }
     }
 
     var body: some View {
@@ -112,6 +131,17 @@ struct TripsListView: View {
             // the bar minimal so the map reads full-bleed behind it.
             .navigationTitle(shown.isEmpty ? filter.rawValue : "")
             .navigationBarTitleDisplayMode(.inline)
+            .onReceive(clock) { now = $0 }
+            // Fill in real routes for every trip on this tab — active and past —
+            // so their maps draw the true path (a road trip's roads, an Indian
+            // train's rail line) without needing the trip's detail view to be
+            // opened first. No tracker is passed, so flight-track fetches (which
+            // spend FR24 credits) stay confined to the detail view; the free
+            // road-trip and train routing runs here. Re-runs when the tab's set
+            // of trips changes; RouteRefresher no-ops legs already routed.
+            .task(id: shown.map(\.persistentModelID)) {
+                await RouteRefresher.refresh(shown.flatMap(\.displaySegments), in: context)
+            }
             .navigationDestination(item: $selectedTrip) { TripDetailView(trip: $0) }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -387,7 +417,7 @@ struct TripsListView: View {
     private var liveStatus: TripStatus? {
         guard showsLiveSection else { return nil }
         return shown
-            .compactMap { TripStatus(trip: $0, records: statusRecords) }
+            .compactMap { TripStatus(trip: $0, records: statusRecords, now: now) }
             .min { ($0.timeRemaining ?? .greatestFiniteMagnitude) < ($1.timeRemaining ?? .greatestFiniteMagnitude) }
     }
 
@@ -478,15 +508,10 @@ struct TripsListView: View {
         Map(position: $camera, selection: $mapSelection) {
             ForEach(displayed) { trip in
                 ForEach(trip.displaySegments) { segment in
-                    let coords = segment.routePlaces.map(\.coordinate)
-                    // A darker, wider casing under each solid line reads like a
-                    // navigation route — crisp against land and water alike.
-                    MapPolyline(coordinates: coords)
-                        .stroke(.black.opacity(0.22),
-                                style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
-                    MapPolyline(coordinates: coords)
-                        .stroke(segment.type.gradient,
-                                style: StrokeStyle(lineWidth: 4.5, lineCap: .round, lineJoin: .round))
+                    // Real routes when cached, straight lines otherwise — and
+                    // the live aircraft while a flight leg is airborne.
+                    SegmentRouteContent(segment: segment,
+                                        live: statusRecords.liveRecord(for: segment))
                 }
                 Annotation(trip.endPlace.displayName, coordinate: trip.endPlace.coordinate) {
                     mapPin(trip)

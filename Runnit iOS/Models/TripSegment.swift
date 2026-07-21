@@ -33,6 +33,25 @@ final class TripSegment {
     /// other mode. Additive with a default so existing segments migrate cleanly.
     var stops: [RoadStop] = []
 
+    /// The actual route the map draws instead of a straight line: Apple Maps
+    /// driving directions (through origin, each stop, destination) for a
+    /// `.roadTrip`, the real flown track (from Flightradar24) for a `.flight`,
+    /// or the published rail route through the train's halts for an Indian
+    /// `.train`. Empty until computed; modes without a real path leave it empty.
+    /// Additive with a default so existing segments migrate cleanly.
+    var routePolyline: [RoutePoint] = []
+
+    /// The geometry the cached `routePolyline` was built for. When it no longer
+    /// matches `geometrySignature` — origin, a stop, or destination moved — the
+    /// route is stale and gets recomputed. Nil means "never computed".
+    var routeSignature: String?
+
+    /// When the flown-track fetch was last attempted for a `.flight` leg. Throttles
+    /// repeat calls that came back empty (a flight FR24 hasn't tracked yet), so a
+    /// map that keeps reappearing doesn't burn API credits re-asking. Unused by
+    /// road trips, whose routing is free.
+    var routeCheckedAt: Date?
+
     /// Position of this leg within its trip (0-based).
     var order: Int = 0
 
@@ -80,6 +99,34 @@ final class TripSegment {
 
     /// Every place the leg passes through, in order: origin, each stop, destination.
     var routePlaces: [Place] { [origin] + stops.map(\.place) + [destination] }
+
+    /// The real path for this leg when we have one (a road trip's driving route or
+    /// a flight's flown track), otherwise nil so a map falls back to its own
+    /// straight line through `routePlaces`.
+    var routedCoordinates: [CLLocationCoordinate2D]? {
+        guard routePolyline.count >= 2 else { return nil }
+        return routePolyline.map(\.coordinate)
+    }
+
+    /// A stable fingerprint of the leg's geometry input (origin, stops,
+    /// destination). Changes whenever any of those move, invalidating a cached
+    /// route. A train's route also depends on *which* train runs it — two trains
+    /// between the same pair of stations can take quite different lines — so the
+    /// number joins the fingerprint there.
+    var geometrySignature: String {
+        let places = routePlaces.map { "\($0.latitude),\($0.longitude)" }.joined(separator: "|")
+        guard type == .train else { return places }
+        return places + "#" + (vehicleNumber ?? "")
+    }
+
+    /// Whether this leg draws a fetched path (road trips: driving directions;
+    /// flights: the flown track; Indian trains: the published rail route) and
+    /// that cached path is missing or stale. Modes with no real route never
+    /// qualify.
+    var needsRouteRefresh: Bool {
+        guard type == .roadTrip || type == .flight || type == .train else { return false }
+        return routePolyline.count < 2 || routeSignature != geometrySignature
+    }
 
     /// Great-circle distance along this leg. With intermediate stops it sums the
     /// hops through each one, so a detour is reflected rather than ignored.

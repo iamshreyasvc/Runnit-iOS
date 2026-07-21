@@ -189,11 +189,13 @@ final class FlightStatusRecord {
 
     /// Whether this snapshot should drive the UI for `segment`: a captured final
     /// snapshot is always valid; live/scheduled data only when the flight is within
-    /// tracking reach and the snapshot was taken today (never a prior day's instance).
+    /// tracking reach and the snapshot is recent (never a prior day's instance).
+    /// Recency is judged by age, not calendar day — a same-day rule hid a
+    /// perfectly fresh mid-flight snapshot the moment a red-eye crossed midnight.
     func isDisplayable(for segment: TripSegment, now: Date = Date()) -> Bool {
         guard didFindData else { return false }
         if isFinal { return true }
         guard FlightTracker.isWithinTrackingReach(segment, now: now) else { return false }
-        return Calendar.current.isDate(fetchedAt, inSameDayAs: now)
+        return now.timeIntervalSince(fetchedAt) < 12 * 3600
     }
 }

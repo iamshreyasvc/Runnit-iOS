@@ -134,6 +134,45 @@ nonisolated struct FR24Airline: Decodable, Equatable, Sendable {
     let icao: String?
 }
 
+/// One row from `flight-tracks` — a flight (by its FR24 id) and the ordered trail
+/// of positions it actually flew.
+nonisolated struct FR24TrackGroup: Decodable, Equatable, Sendable {
+    let fr24ID: String?
+    let tracks: [FR24TrackPoint]?
+
+    enum CodingKeys: String, CodingKey {
+        case fr24ID = "fr24_id"
+        case tracks
+    }
+}
+
+/// A single fix along a flown track. We only draw `lat`/`lon`; the rest is
+/// decoded for completeness and future use (altitude colouring, etc.).
+nonisolated struct FR24TrackPoint: Decodable, Equatable, Sendable {
+    let timestamp: String?
+    let lat: Double?
+    let lon: Double?
+    let alt: Double?
+    let gspeed: Double?
+    let track: Double?
+}
+
+/// The `flight-tracks` response body. Unlike every other list endpoint, this one
+/// is NOT wrapped in `{"data": ...}` — the top level is a plain JSON array.
+/// Decoded leniently (array first, envelope as a fallback) so a change in the
+/// wrapping can't silently break the flown-track map again.
+nonisolated struct FR24TracksPayload: Decodable {
+    let groups: [FR24TrackGroup]
+
+    init(from decoder: Decoder) throws {
+        if let list = try? [FR24TrackGroup](from: decoder) {
+            groups = list
+        } else {
+            groups = try FR24Envelope<FR24TrackGroup>(from: decoder).data ?? []
+        }
+    }
+}
+
 // MARK: - Client
 
 /// `nonisolated` throughout: the project defaults types to `@MainActor`, and a
@@ -181,6 +220,18 @@ nonisolated struct FR24Client {
     /// Static airline reference data, keyed by ICAO code (e.g. "UAL").
     func airline(icao: String) async throws -> FR24Airline {
         try await get("/static/airlines/\(icao.uppercased())/light", query: [])
+    }
+
+    /// The ordered positional trail a specific flight flew, keyed by its FR24 id
+    /// (hex, e.g. "34242a02", obtained from `summaries`). Empty if FR24 has no
+    /// track for it. This is the endpoint that turns a straight airport-to-airport
+    /// line into the real flown path — including historical flights.
+    func flightTracks(flightID: String) async throws -> [FR24TrackPoint] {
+        let payload: FR24TracksPayload = try await get(
+            "/flight-tracks",
+            query: [URLQueryItem(name: "flight_id", value: flightID)]
+        )
+        return payload.groups.first?.tracks ?? []
     }
 
     // MARK: Transport

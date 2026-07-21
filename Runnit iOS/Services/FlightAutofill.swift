@@ -53,7 +53,7 @@ enum FlightAutofill {
             switch self {
             case .filled:        return nil
             case .invalidNumber: return "Enter a flight number like \u{201C}AA 100\u{201D}."
-            case .notFound:      return "Couldn't find that flight number in the last week. Flightradar24 has no data on flights that haven't flown yet — enter the details manually."
+            case .notFound:      return "Couldn't find that flight number in the last two weeks. Flightradar24 has no data on flights that haven't flown yet — enter the details manually."
             case .noKey:         return "Add your Flightradar24 API token (Account tab) to look flights up automatically."
             case .insufficientCredits: return "Flightradar24 credits exhausted — top up your plan, or enter the flight details manually."
             case .failed:        return "Lookup failed. Check your connection or enter the details manually."
@@ -81,9 +81,13 @@ enum FlightAutofill {
 
             let departure = stamp(r.departureScheduled, onto: date, timeZone: r.departureTimeZone)
             var arrival = stamp(r.arrivalScheduled, onto: date, timeZone: r.arrivalTimeZone)
-            // Overnight flights arrive the next calendar day.
+            // Overnight flights arrive the next calendar day. Roll the day on the
+            // arrival airport's calendar rather than adding 24 raw hours, so a
+            // DST boundary can't skew the time.
             if let d = departure, let a = arrival, a < d {
-                arrival = a.addingTimeInterval(24 * 3600)
+                var cal = Calendar(identifier: .gregorian)
+                cal.timeZone = r.arrivalTimeZone.flatMap(TimeZone.init(identifier:)) ?? .current
+                arrival = cal.date(byAdding: .day, value: 1, to: a) ?? a.addingTimeInterval(24 * 3600)
             }
 
             return .filled(Filled(

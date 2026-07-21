@@ -18,20 +18,17 @@ struct FullMapView: View {
     @State private var mapSelection: PersistentIdentifier?
     @State private var selectedTrip: Trip?
 
+    @Query private var statusRecords: [FlightStatusRecord]
+
     var body: some View {
         NavigationStack {
             Map(selection: $mapSelection) {
                 ForEach(trips) { trip in
                     ForEach(trip.displaySegments) { segment in
-                        let coords = segment.routePlaces.map(\.coordinate)
-                        // Casing under a solid, gradient-tinted line — a crisp,
-                        // navigation-grade route rather than a faint dashed hop.
-                        MapPolyline(coordinates: coords)
-                            .stroke(.black.opacity(0.22),
-                                    style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
-                        MapPolyline(coordinates: coords)
-                            .stroke(segment.type.gradient,
-                                    style: StrokeStyle(lineWidth: 4.5, lineCap: .round, lineJoin: .round))
+                        // Real routes when cached, straight lines otherwise —
+                        // and the live aircraft while a flight leg is airborne.
+                        SegmentRouteContent(segment: segment,
+                                            live: statusRecords.liveRecord(for: segment))
                     }
                     Annotation(trip.endPlace.displayName, coordinate: trip.endPlace.coordinate) {
                         Image(systemName: trip.type.symbol)

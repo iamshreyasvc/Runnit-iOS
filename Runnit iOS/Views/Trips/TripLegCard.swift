@@ -317,14 +317,14 @@ struct TripLegCard: View {
         case .new:
             StopEditorView(titleText: "Add Stop") { stop in
                 segment.stops.append(stop)
-                save()
+                saveAndReroute()
             }
         case .existing(let index):
             let current = segment.stops.indices.contains(index) ? segment.stops[index] : nil
             StopEditorView(titleText: "Edit Stop", stop: current) { updated in
                 guard segment.stops.indices.contains(index) else { return }
                 segment.stops[index] = updated
-                save()
+                saveAndReroute()
             }
         }
     }
@@ -334,16 +334,26 @@ struct TripLegCard: View {
         guard segment.stops.indices.contains(index),
               segment.stops.indices.contains(target) else { return }
         segment.stops.swapAt(index, target)
-        save()
+        saveAndReroute()
     }
 
     private func removeStop(at index: Int) {
         guard segment.stops.indices.contains(index) else { return }
         segment.stops.remove(at: index)
-        save()
+        saveAndReroute()
     }
 
     private func save() { try? context.save() }
+
+    /// Persist a stop change, then re-fetch the leg's road-following route so the
+    /// map redraws through the new stop set right away. Kicked off here, at the
+    /// mutation, rather than left to a map-side refresh: the map re-fetch keys off
+    /// the segment's geometry and doesn't reliably re-run just from staying on the
+    /// page, so a stop added on the rail would otherwise only appear on re-entry.
+    private func saveAndReroute() {
+        save()
+        Task { await RouteRefresher.refresh([segment], in: context) }
+    }
 
     @ViewBuilder
     private var zoneShiftRow: some View {

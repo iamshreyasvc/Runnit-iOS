@@ -89,6 +89,39 @@ final class LocationSearchService: NSObject, MKLocalSearchCompleterDelegate {
         )
     }
 
+    /// Resolve an Indian Railways station (by name and/or code) into a Place with
+    /// coordinates, using Apple's local search (free). The returned Place embeds
+    /// the station code in its name, matching the airport convention, and defaults
+    /// its clock to IST — every Indian station runs on one zone.
+    func resolveStation(name: String?, code: String?) async -> Place? {
+        let queryName = name?.trimmingCharacters(in: .whitespaces)
+        let terms = [queryName, code].compactMap { $0 }.filter { !$0.isEmpty }
+        guard !terms.isEmpty else { return nil }
+
+        let request = MKLocalSearch.Request()
+        // "<station name> railway station India" reliably resolves the station POI.
+        let subject = queryName ?? code!
+        request.naturalLanguageQuery = "\(subject) railway station India"
+        request.resultTypes = [.pointOfInterest, .address]
+
+        guard let response = try? await MKLocalSearch(request: request).start(),
+              let item = response.mapItems.first else { return nil }
+
+        let coordinate = item.placemark.coordinate
+        let base = queryName ?? item.name ?? (code ?? "Station")
+        let displayName = code.map { "\(base) (\($0))" } ?? base
+        return Place(
+            name: displayName,
+            subtitle: item.placemark.locality ?? item.placemark.administrativeArea ?? "",
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            isoCountryCode: item.placemark.isoCountryCode,
+            country: item.placemark.country,
+            locality: item.placemark.locality ?? item.placemark.administrativeArea,
+            timeZoneIdentifier: item.timeZone?.identifier ?? "Asia/Kolkata"
+        )
+    }
+
     // MARK: MKLocalSearchCompleterDelegate
 
     nonisolated func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {

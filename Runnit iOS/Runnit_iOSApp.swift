@@ -22,6 +22,9 @@ struct Runnit_iOSApp: App {
         SampleSeeder.seedIfNeeded(container.mainContext)
         SampleSeeder.backfillSegmentsIfNeeded(container.mainContext)
         SampleSeeder.seedConnectionIfNeeded(container.mainContext)
+        SampleSeeder.seedFlightPathSampleIfNeeded(container.mainContext)
+        SampleSeeder.clearFlightRouteThrottleIfNeeded(container.mainContext)
+        SampleSeeder.clearMismatchedFlightRecordsIfNeeded(container.mainContext)
 
         _flightTracker = State(initialValue: FlightTracker())
     }
@@ -40,6 +43,9 @@ enum SampleSeeder {
     private static let didSeedKey = "runnit.didSeedSamples.v1"
     private static let didBackfillKey = "runnit.didBackfillSegments.v1"
     private static let didSeedConnectionKey = "runnit.didSeedConnection.v1"
+    private static let didSeedFlightPathKey = "runnit.didSeedFlightPathSample.v1"
+    private static let didClearRouteThrottleKey = "runnit.didClearRouteThrottle.v1"
+    private static let didClearMismatchedRecordsKey = "runnit.didClearMismatchedRecords.v1"
 
     @MainActor
     static func seedIfNeeded(_ context: ModelContext) {
@@ -86,6 +92,84 @@ enum SampleSeeder {
         }
         try? context.save()
         defaults.set(true, forKey: didSeedConnectionKey)
+    }
+
+    /// Additive one-time step: a real, recently-flown long-haul so the flown-track
+    /// map feature is testable out of the box. SQ 22 (Singapore → Newark) is a
+    /// daily ultra-long-haul whose near-polar great-circle path curves dramatically
+    /// away from the straight airport-to-airport line — the clearest possible demo
+    /// that the map is drawing the *actual* route from Flightradar24. Its own flag,
+    /// so installs that already seeded still get it.
+    @MainActor
+    static func seedFlightPathSampleIfNeeded(_ context: ModelContext) {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: didSeedFlightPathKey) else { return }
+
+        let sin = Place(name: "Singapore Changi (SIN)", subtitle: "Singapore",
+                        latitude: 1.3644, longitude: 103.9915,
+                        isoCountryCode: "SG", country: "Singapore", locality: "Singapore",
+                        timeZoneIdentifier: "Asia/Singapore")
+        let ewr = Place(name: "Newark Liberty (EWR)", subtitle: "Newark, NJ",
+                        latitude: 40.6895, longitude: -74.1745,
+                        isoCountryCode: "US", country: "United States", locality: "Newark",
+                        timeZoneIdentifier: "America/New_York")
+
+        // A week ago, so FR24 has already tracked it (and it clears the 2022 floor).
+        let departure = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+
+        let trip = Trip.make(title: "Flight Path Test", segments: [
+            TripSegment(
+                type: .flight, origin: sin, destination: ewr,
+                departureDate: departure,
+                arrivalDate: departure.addingTimeInterval(18.5 * 3600),
+                operatorName: "Singapore Airlines", vehicleNumber: "SQ 22"
+            )
+        ])
+        context.insert(trip)
+        for segment in trip.segments { context.insert(segment) }
+        try? context.save()
+        defaults.set(true, forKey: didSeedFlightPathKey)
+    }
+
+    /// One-time repair: builds before the flight-tracks decoding fix failed every
+    /// flown-track fetch AND stamped the 12-hour retry throttle, locking the map
+    /// into its straight-line fallback. Clear the stamp wherever no route was
+    /// actually stored, so fixed installs re-fetch on the next map appearance.
+    @MainActor
+    static func clearFlightRouteThrottleIfNeeded(_ context: ModelContext) {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: didClearRouteThrottleKey) else { return }
+
+        let segments = (try? context.fetch(FetchDescriptor<TripSegment>())) ?? []
+        for segment in segments where segment.routeCheckedAt != nil && segment.routePolyline.count < 2 {
+            segment.routeCheckedAt = nil
+        }
+        try? context.save()
+        defaults.set(true, forKey: didClearRouteThrottleKey)
+    }
+
+    /// One-time repair: an earlier summary-matching rule could latch onto a
+    /// different rotation of the same flight number — hours earlier the same day
+    /// — and freeze that flight's landed data onto the leg. Delete any snapshot
+    /// whose actual takeoff sits impossibly far before the leg's planned
+    /// departure, so the next refresh re-fetches the right operation.
+    @MainActor
+    static func clearMismatchedFlightRecordsIfNeeded(_ context: ModelContext) {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: didClearMismatchedRecordsKey) else { return }
+
+        let records = (try? context.fetch(FetchDescriptor<FlightStatusRecord>())) ?? []
+        let segments = (try? context.fetch(FetchDescriptor<TripSegment>())) ?? []
+        let byID = Dictionary(segments.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        for record in records {
+            guard let segment = byID[record.segmentID],
+                  let takeoff = record.depActual,
+                  takeoff < segment.departureDate.addingTimeInterval(-FlightTracker.summaryEarlySlack)
+            else { continue }
+            context.delete(record)
+        }
+        try? context.save()
+        defaults.set(true, forKey: didClearMismatchedRecordsKey)
     }
 
     /// One-time upgrade: give any legacy Trip (stored before multi-modal legs

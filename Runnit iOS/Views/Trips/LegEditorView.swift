@@ -125,6 +125,7 @@ struct LegEditorView: View {
                     VStack(spacing: 16) {
                         modeCard
                         if draft.type == .flight { flightLookupCard }
+                        else if draft.type == .train { trainLookupCard }
                         routeCard
                         whenCard
                         if draft.type.isScheduledTransit { detailsCard }
@@ -334,6 +335,70 @@ struct LegEditorView: View {
         if let arr = f.arrival { draft.hasArrival = true; draft.arrivalDate = arr }
         lookupSucceeded = true
         lookupMessage = "Filled: \(f.routeSummary)"
+    }
+
+    // MARK: Train auto-fill
+
+    private var trainLookupCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Auto-fill", systemImage: "sparkle.magnifyingglass").font(.headline)
+            Text("Enter an Indian Railways train number and date to fill in the stations, train name, and times.")
+                .font(.caption).foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                TextField("Train number (e.g. 12608)", text: $lookupNumber)
+                    .keyboardType(.numberPad)
+                    .autocorrectionDisabled()
+                    .onSubmit { Task { await runTrainLookup() } }
+                    .padding(.horizontal, 12).padding(.vertical, 11)
+                    .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 12))
+
+                if lookingUp {
+                    ProgressView().frame(width: 44)
+                } else {
+                    Button { Task { await runTrainLookup() } } label: {
+                        Text("Look up").font(.subheadline.weight(.semibold))
+                    }
+                    .buttonStyle(.glassProminent)
+                    .tint(accent)
+                    .disabled(lookupNumber.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+
+            DatePicker("Travel date", selection: $draft.departureDate, displayedComponents: .date)
+                .datePickerStyle(.compact)
+
+            if let msg = lookupMessage {
+                Label(msg, systemImage: lookupSucceeded ? "checkmark.circle.fill" : "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(lookupSucceeded ? .green : .secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard(tint: accent.opacity(0.18))
+    }
+
+    private func runTrainLookup() async {
+        lookingUp = true
+        lookupMessage = nil
+        lookupSucceeded = false
+        let outcome = await TrainAutofill.run(trainNumber: lookupNumber, date: draft.departureDate)
+        lookingUp = false
+
+        guard case .filled(let f) = outcome else {
+            lookupMessage = outcome.message
+            return
+        }
+        if let o = f.origin { draft.origin = o }
+        if let d = f.destination { draft.destination = d }
+        if !f.trainName.isEmpty { draft.operatorName = f.trainName }
+        if !f.trainNumber.isEmpty { draft.vehicleNumber = f.trainNumber }
+        if let dep = f.departure { draft.departureDate = dep }
+        if let arr = f.arrival { draft.hasArrival = true; draft.arrivalDate = arr }
+        lookupSucceeded = true
+        lookupMessage = f.runsOnDate
+            ? "Filled: \(f.routeSummary)"
+            : "Filled: \(f.routeSummary) — heads up, this train doesn't run on the selected date."
     }
 }
 

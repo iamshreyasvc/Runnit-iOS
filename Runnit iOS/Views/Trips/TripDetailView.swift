@@ -77,6 +77,8 @@ struct TripDetailView: View {
         }
         .refreshable {
             if let seg = primaryFlightSegment { await tracker.refresh(seg, in: context) }
+            // Also advance the travelled track while a flight is in the air.
+            await RouteRefresher.refresh(trip.displaySegments, in: context, tracker: tracker)
         }
         .onAppear(perform: expandKeyLegs)
         .task { await backfillTimeZones() }
@@ -135,14 +137,10 @@ struct TripDetailView: View {
                 .annotationTitles(.hidden)
             }
             ForEach(trip.displaySegments) { segment in
-                // Route through any intermediate stops so a detour reads truthfully.
-                let coords = segment.routePlaces.map(\.coordinate)
-                MapPolyline(coordinates: coords)
-                    .stroke(.black.opacity(0.22),
-                            style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
-                MapPolyline(coordinates: coords)
-                    .stroke(segment.type.gradient,
-                            style: StrokeStyle(lineWidth: 4.5, lineCap: .round, lineJoin: .round))
+                // Road trips draw the actual roads, flights their flown track —
+                // and an airborne flight carries the live aircraft on the line.
+                SegmentRouteContent(segment: segment,
+                                    live: statusRecords.liveRecord(for: segment))
                 ForEach(segment.stops) { stop in
                     Annotation(stop.place.displayName, coordinate: stop.place.coordinate) {
                         Image(systemName: stop.category.symbol)
@@ -175,6 +173,21 @@ struct TripDetailView: View {
         .onMapCameraChange(frequency: .continuous) { context in
             currentCamera = context.camera
         }
+        // Fill in (or refresh) the real path for each leg — driving directions for
+        // road trips, the flown track for flights. Keyed on the routed legs'
+        // geometry so it re-runs when a stop is added, moved, or removed.
+        .task(id: routeGeometrySignature) {
+            await RouteRefresher.refresh(trip.displaySegments, in: context, tracker: tracker)
+        }
+    }
+
+    /// Fingerprint of every routed leg's geometry, so the route refresh re-runs
+    /// only when a road or flight leg's origin, stops, or destination change.
+    private var routeGeometrySignature: String {
+        trip.displaySegments
+            .filter { $0.type == .roadTrip || $0.type == .flight }
+            .map(\.geometrySignature)
+            .joined(separator: "~")
     }
 
     /// Floating controls above the map, kept out of the map's ignored safe area so
@@ -410,14 +423,22 @@ struct TripDetailView: View {
     @ViewBuilder
     private var statusPill: some View {
         if !isUnderway {
-            Text(trip.isPast ? "Completed" : Format.relative(trip.startDate))
+            Text(isSettled ? "Completed" : Format.relative(trip.startDate))
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(trip.isPast ? .secondary : trip.type.accent)
+                .foregroundStyle(isSettled ? .secondary : trip.type.accent)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background((trip.isPast ? Color.secondary : trip.type.accent).opacity(0.15),
+                .background((isSettled ? Color.secondary : trip.type.accent).opacity(0.15),
                             in: .capsule)
         }
+    }
+
+    /// Whether this trip is effectively over — judged on live records, not just
+    /// the planned times, so a leg that landed early reads "Completed" rather
+    /// than counting down to a booked arrival that no longer matters.
+    private var isSettled: Bool {
+        liveStatus == nil
+            && TripStatus.effectiveEnd(of: trip, records: statusRecords) < Date()
     }
 
     /// A right-indented shortcut beside the title bubble for the leg happening now:

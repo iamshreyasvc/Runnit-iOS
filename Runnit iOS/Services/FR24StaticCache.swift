@@ -22,8 +22,11 @@ final class FR24StaticCache {
     static let shared = FR24StaticCache()
 
     private let client: FR24Client
-    private var airports: [String: FR24Airport] = [:]
-    private var airlines: [String: String] = [:]
+    /// Memoized answers. A stored `nil` value means "the API answered and doesn't
+    /// know this code" — remembered so an unknown code isn't re-billed on every
+    /// refresh. Transient failures (offline, credits, auth) are never cached.
+    private var airports: [String: FR24Airport?] = [:]
+    private var airlines: [String: String?] = [:]
 
     init(client: FR24Client = FR24Client()) {
         self.client = client
@@ -35,9 +38,16 @@ final class FR24StaticCache {
     func airport(code: String?) async -> FR24Airport? {
         guard let code = code?.uppercased(), (3...4).contains(code.count) else { return nil }
         if let cached = airports[code] { return cached }
-        guard let fetched = try? await client.airport(code: code) else { return nil }
-        airports[code] = fetched
-        return fetched
+        do {
+            let fetched = try await client.airport(code: code)
+            airports.updateValue(fetched, forKey: code)
+            return fetched
+        } catch FR24Error.http, FR24Error.decoding {
+            airports.updateValue(nil, forKey: code)   // definitively unknown
+            return nil
+        } catch {
+            return nil                                // transient — retry later
+        }
     }
 
     /// The airline's display name for an ICAO code such as "UAL". Falls back to
@@ -45,10 +55,16 @@ final class FR24StaticCache {
     func airlineName(icao: String?) async -> String? {
         guard let icao = icao?.uppercased(), !icao.isEmpty else { return nil }
         if let cached = airlines[icao] { return cached }
-        guard let fetched = try? await client.airline(icao: icao),
-              let name = fetched.name, !name.isEmpty
-        else { return nil }
-        airlines[icao] = name
-        return name
+        do {
+            let fetched = try await client.airline(icao: icao)
+            let name = (fetched.name?.isEmpty == false) ? fetched.name : nil
+            airlines.updateValue(name, forKey: icao)
+            return name
+        } catch FR24Error.http, FR24Error.decoding {
+            airlines.updateValue(nil, forKey: icao)   // definitively unknown
+            return nil
+        } catch {
+            return nil                                // transient — retry later
+        }
     }
 }

@@ -107,6 +107,18 @@ struct TripStatus {
 
     // MARK: Times
 
+    /// When the trip is effectively over, sharpened by whatever live snapshots
+    /// exist: the last leg's actual or estimated arrival when a record has one,
+    /// its planned arrival otherwise, with the open-ended assumption as the
+    /// final fallback. This is the clock Upcoming/Past classification runs on —
+    /// planned times alone can be hours wrong in either direction (a flight
+    /// that landed early is over; a delayed one is not).
+    static func effectiveEnd(of trip: Trip, records: [FlightStatusRecord], now: Date = Date()) -> Date {
+        let segments = trip.displaySegments
+        guard !segments.isEmpty else { return trip.endDate }
+        return end(ofLegAt: segments.count - 1, in: segments, records: records, now: now)
+    }
+
     /// The live snapshot for a leg, only when it should drive the UI.
     private static func record(
         for segment: TripSegment, records: [FlightStatusRecord], now: Date
