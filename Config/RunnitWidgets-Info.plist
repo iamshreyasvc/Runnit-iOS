@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  The one thing that makes this bundle an extension rather than dead weight.
+	  It has to be a file: NSExtensionPointIdentifier lives *inside* an NSExtension
+	  dict, and INFOPLIST_KEY_* build settings can only write flat top-level keys —
+	  set that way it is dropped silently, and the app then fails to install with
+	  "Invalid placeholder attributes", because it carries a PlugIn that claims no
+	  extension point.
+
+	  Sits in Config/ rather than RunnitWidgets/ for the same reason the app's
+	  Info.plist does: RunnitWidgets/ is a synchronized group, and everything in it
+	  is a build input. GENERATE_INFOPLIST_FILE is still YES, so Xcode merges the
+	  bundle name, versions and deployment target on top of this at build time.
+	-->
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.widgetkit-extension</string>
+	</dict>
+</dict>
+</plist>
