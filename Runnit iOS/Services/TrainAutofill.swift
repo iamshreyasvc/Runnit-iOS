@@ -57,8 +57,8 @@ enum TrainAutofill {
         var message: String? {
             switch self {
             case .filled:        return nil
-            case .invalidNumber: return "Enter a 5-digit Indian Railways train number, like \u{201C}12608\u{201D}."
-            case .notFound:      return "Couldn't find that train number on erail. Check the number, or enter the details manually."
+            case .invalidNumber: return "Enter a train number \u{2014} Indian Railways (5-digit, like \u{201C}12608\u{201D}) or Amtrak (like \u{201C}1\u{201D})."
+            case .notFound:      return "Couldn't find that train number. Check the number, or enter the details manually."
             case .failed:        return "Lookup failed. Check your connection or enter the details manually."
             }
         }
@@ -75,10 +75,51 @@ enum TrainAutofill {
         trainNumber: String,
         date: Date,
         client: ErailClient = ErailClient(),
-        search: LocationSearchService? = nil
+        search: LocationSearchService? = nil,
+        amtrak: AmtrakSchedule = .bundled
     ) async -> Outcome {
-        guard let number = normalizedNumber(from: trainNumber) else { return .invalidNumber }
+        // Dispatch by number length: Indian Railways numbers are 5 digits and go
+        // to erail; Amtrak numbers are 1–4 digits and resolve against the bundled
+        // GTFS timetable. Anything else isn't a train number we know.
+        let digits = trainNumber.filter(\.isNumber)
+        switch digits.count {
+        case 5:      return await runIndian(number: digits, date: date, client: client, search: search)
+        case 1...4:  return runAmtrak(number: digits, date: date, schedule: amtrak)
+        default:     return .invalidNumber
+        }
+    }
 
+    /// Fill an Amtrak leg from the bundled GTFS timetable: both stations (placed
+    /// from `AmtrakStationDatabase`), the route name, and departure / arrival each
+    /// stamped in its own station's timezone. No network — the dataset is local.
+    static func runAmtrak(number: String, date: Date, schedule: AmtrakSchedule) -> Outcome {
+        guard let variant = schedule.variant(forNumber: number, on: date),
+              let originStop = variant.origin,
+              let destStop = variant.destination
+        else { return .notFound }
+
+        let origin = AmtrakStationDatabase.place(code: originStop.code)
+        let destination = AmtrakStationDatabase.place(code: destStop.code)
+        let originTZ = AmtrakStationDatabase.timeZone(code: originStop.code) ?? .current
+        let destTZ = AmtrakStationDatabase.timeZone(code: destStop.code) ?? originTZ
+
+        return .filled(Filled(
+            origin: origin,
+            destination: destination,
+            trainName: variant.name,
+            trainNumber: number,
+            departure: AmtrakSchedule.stamp(cumulative: originStop.dep, onto: date, in: originTZ),
+            arrival: AmtrakSchedule.stamp(cumulative: destStop.arr, onto: date, in: destTZ),
+            runsOnDate: variant.runs(on: date, in: originTZ)
+        ))
+    }
+
+    private static func runIndian(
+        number: String,
+        date: Date,
+        client: ErailClient,
+        search: LocationSearchService?
+    ) async -> Outcome {
         let schedule: TrainScheduleResult?
         do {
             schedule = try await client.trainDetails(trainNumber: number)

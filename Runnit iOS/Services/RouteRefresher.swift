@@ -88,19 +88,28 @@ enum RouteRefresher {
                 }
 
             case .train:
-                // Only Indian Railways legs have a published route to fetch; the
-                // check is local and free, so a non-Indian train costs nothing.
-                guard TrainRouteProvider.trainNumber(for: segment) != nil else { continue }
-                // In-memory throttle (see `trainAttemptedAt`): don't re-ask erail
-                // on every appearance, but do retry after a relaunch.
-                if let last = trainAttemptedAt[segment.id],
-                   Date().timeIntervalSince(last) < trainRetryInterval { continue }
-                trainAttemptedAt[segment.id] = Date()
-                guard let route = await TrainRouteProvider.route(for: segment),
-                      segment.geometrySignature == signature else { continue }
-                segment.routePolyline = route
-                // A timetable route is static: cache it as final.
-                segment.routeSignature = signature
+                if TrainRouteProvider.trainNumber(for: segment) != nil {
+                    // Indian Railways: fetch the published route from erail.
+                    // In-memory throttle (see `trainAttemptedAt`): don't re-ask on
+                    // every appearance, but do retry after a relaunch.
+                    if let last = trainAttemptedAt[segment.id],
+                       Date().timeIntervalSince(last) < trainRetryInterval { continue }
+                    trainAttemptedAt[segment.id] = Date()
+                    guard let route = await TrainRouteProvider.route(for: segment),
+                          segment.geometrySignature == signature else { continue }
+                    segment.routePolyline = route
+                    // A timetable route is static: cache it as final.
+                    segment.routeSignature = signature
+                } else if AmtrakRouteProvider.trainNumber(for: segment) != nil {
+                    // Amtrak: trace the route from the bundled GTFS geometry. No
+                    // network, so no throttle — it's a local lookup.
+                    guard let route = AmtrakRouteProvider.route(for: segment),
+                          segment.geometrySignature == signature else { continue }
+                    segment.routePolyline = route
+                    segment.routeSignature = signature
+                } else {
+                    continue
+                }
 
             default:
                 continue
