@@ -35,9 +35,10 @@ final class TripSegment {
 
     /// The actual route the map draws instead of a straight line: Apple Maps
     /// driving directions (through origin, each stop, destination) for a
-    /// `.roadTrip`, or the real flown track (from Flightradar24) for a `.flight`.
-    /// Empty until computed; modes without a real path leave it empty. Additive
-    /// with a default so existing segments migrate cleanly.
+    /// `.roadTrip`, the real flown track (from Flightradar24) for a `.flight`,
+    /// or the published rail route through the train's halts for an Indian
+    /// `.train`. Empty until computed; modes without a real path leave it empty.
+    /// Additive with a default so existing segments migrate cleanly.
     var routePolyline: [RoutePoint] = []
 
     /// The geometry the cached `routePolyline` was built for. When it no longer
@@ -109,16 +110,21 @@ final class TripSegment {
 
     /// A stable fingerprint of the leg's geometry input (origin, stops,
     /// destination). Changes whenever any of those move, invalidating a cached
-    /// route.
+    /// route. A train's route also depends on *which* train runs it — two trains
+    /// between the same pair of stations can take quite different lines — so the
+    /// number joins the fingerprint there.
     var geometrySignature: String {
-        routePlaces.map { "\($0.latitude),\($0.longitude)" }.joined(separator: "|")
+        let places = routePlaces.map { "\($0.latitude),\($0.longitude)" }.joined(separator: "|")
+        guard type == .train else { return places }
+        return places + "#" + (vehicleNumber ?? "")
     }
 
     /// Whether this leg draws a fetched path (road trips: driving directions;
-    /// flights: the flown track) and that cached path is missing or stale. Modes
-    /// with no real route (train/other) never qualify.
+    /// flights: the flown track; Indian trains: the published rail route) and
+    /// that cached path is missing or stale. Modes with no real route never
+    /// qualify.
     var needsRouteRefresh: Bool {
-        guard type == .roadTrip || type == .flight else { return false }
+        guard type == .roadTrip || type == .flight || type == .train else { return false }
         return routePolyline.count < 2 || routeSignature != geometrySignature
     }
 

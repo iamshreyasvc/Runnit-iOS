@@ -13,10 +13,13 @@ import Testing
 struct TrainAutofillTests {
 
     // A real getTrains.aspx payload for 12608 (Lalbagh SF Express, daily),
-    // truncated after the fields the parser reads.
+    // truncated after the fields the parser reads. A captured fixture — kept on
+    // one line so it round-trips exactly, hence the line-length exception.
+    // swiftlint:disable:next line_length
     private let lalbagh = "~~~~~~2026-7-18-8-41-7~~~^12608~LALBAGH SF EXP~Ksr Bengaluru~SBC~Mgr Chennai Ctr~MAS~Ksr Bengaluru~SBC~Mgr Chennai Ctr~MAS~06.25~12.20~05.55~1111111~~~~~~~~000100101000000~0~0~1~1~06.25~12.20~13~1111111~First~Last~SUPERFAST"
 
     // 20608 (MAS Vande Bharat, runs every day except Tuesday), MYS → MAS.
+    // swiftlint:disable:next line_length
     private let vandeBharat = "~~~~~~2026-7-18-8-43-8~~~^20608~MAS VANDEBHARAT~Mysore Jn~MYS~Mgr Chennai Ctr~MAS~Mysore Jn~MYS~Mgr Chennai Ctr~MAS~13.05~19.20~06.15~1101111~~~~~~~~000100000010000~0~0~0~1~13.05~19.20~4~1101111~First~Last~SUPERFAST"
 
     // MARK: Parsing
@@ -65,8 +68,11 @@ struct TrainAutofillTests {
     // MARK: Duration
 
     @Test func durationParsesToInterval() {
-        #expect(ErailClient.parse(lalbagh)!.durationInterval == 5 * 3600 + 55 * 60)
-        #expect(ErailClient.parse(vandeBharat)!.durationInterval == 6 * 3600 + 15 * 60)
+        // Annotate the expected values as TimeInterval: under Swift Testing's
+        // `#expect` expansion a bare integer expression is captured as `Int`,
+        // which then mismatches the `TimeInterval?` left side.
+        #expect(ErailClient.parse(lalbagh)!.durationInterval == TimeInterval(5 * 3600 + 55 * 60))
+        #expect(ErailClient.parse(vandeBharat)!.durationInterval == TimeInterval(6 * 3600 + 15 * 60))
     }
 
     // MARK: Number normalisation

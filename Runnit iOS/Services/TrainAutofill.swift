@@ -87,9 +87,11 @@ enum TrainAutofill {
         }
         guard let s = schedule else { return .notFound }
 
-        let search = search ?? LocationSearchService()
-        let origin = await search.resolveStation(name: s.sourceName, code: s.sourceCode)
-        let destination = await search.resolveStation(name: s.destinationName, code: s.destinationCode)
+        // Prefer the bundled station database (an exact code → coordinate join —
+        // instant and reliable for Indian stations). Only when a code isn't in
+        // the dataset do we fall back to Apple's local search.
+        let origin = await resolveStation(name: s.sourceName, code: s.sourceCode, search: search)
+        let destination = await resolveStation(name: s.destinationName, code: s.destinationCode, search: search)
 
         let departure = stamp(s.departureTime, onto: date)
         // Prefer the published duration to place the arrival — a long-distance
@@ -111,6 +113,20 @@ enum TrainAutofill {
             arrival: arrival,
             runsOnDate: s.runs(on: date)
         ))
+    }
+
+    /// Place a station on the map: try the bundled code → coordinate database
+    /// first, then Apple's local search as a fallback for codes not in the set.
+    private static func resolveStation(
+        name: String,
+        code: String,
+        search: LocationSearchService?
+    ) async -> Place? {
+        if let place = StationDatabase.place(code: code, displayName: name) {
+            return place
+        }
+        let search = search ?? LocationSearchService()
+        return await search.resolveStation(name: name, code: code)
     }
 
     /// Combine the IST wall-clock time-of-day in `hhmm` ("HH.MM") with the

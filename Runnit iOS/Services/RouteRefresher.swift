@@ -10,7 +10,9 @@
 //    • road trips — Apple Maps driving directions (free), recomputed when a stop
 //      is added, moved, or removed;
 //    • flights — the actual flown track from Flightradar24, which works for
-//      historical flights too, so Past Trips draw their real route.
+//      historical flights too, so Past Trips draw their real route;
+//    • Indian trains — the published rail route from erail (free), traced
+//      through the train's own halts.
 //
 
 import Foundation
@@ -26,6 +28,19 @@ enum RouteRefresher {
     /// often instead — that's what keeps the travelled line growing behind the
     /// live aircraft.
     private static let liveRetryInterval: TimeInterval = 10 * 60
+
+    /// A train route erail didn't answer for is retried no more often than this.
+    /// erail is free, so this is only about not hammering it (and not stalling
+    /// the map) when it's down.
+    private static let trainRetryInterval: TimeInterval = 6 * 3600
+
+    /// Last erail route attempt per train segment, held in memory only. Unlike a
+    /// flight's persisted `routeCheckedAt` — which must survive relaunch to
+    /// protect paid FR24 credits — an unmatched train route is free to re-attempt
+    /// and *should* re-attempt after an app update. Keeping this in memory means
+    /// the throttle stops a reappearing map from spamming erail within a session,
+    /// yet a relaunch (e.g. after installing a fix) always retries.
+    private static var trainAttemptedAt: [UUID: Date] = [:]
 
     /// Fetch and persist real routes for any of `segments` that are stale. No-ops
     /// for legs already up to date, so it's cheap to call on every map appearance.
@@ -71,6 +86,21 @@ enum RouteRefresher {
                     // start the lockout; the next appearance retries.
                     continue
                 }
+
+            case .train:
+                // Only Indian Railways legs have a published route to fetch; the
+                // check is local and free, so a non-Indian train costs nothing.
+                guard TrainRouteProvider.trainNumber(for: segment) != nil else { continue }
+                // In-memory throttle (see `trainAttemptedAt`): don't re-ask erail
+                // on every appearance, but do retry after a relaunch.
+                if let last = trainAttemptedAt[segment.id],
+                   Date().timeIntervalSince(last) < trainRetryInterval { continue }
+                trainAttemptedAt[segment.id] = Date()
+                guard let route = await TrainRouteProvider.route(for: segment),
+                      segment.geometrySignature == signature else { continue }
+                segment.routePolyline = route
+                // A timetable route is static: cache it as final.
+                segment.routeSignature = signature
 
             default:
                 continue

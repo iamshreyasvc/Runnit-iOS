@@ -26,6 +26,7 @@ enum TripFilter: String, CaseIterable, Identifiable {
 struct TripsListView: View {
     let filter: TripFilter
 
+    @Environment(\.modelContext) private var context
     @Query(sort: \Trip.departureDate, order: .forward) private var allTrips: [Trip]
     @Query private var statusRecords: [FlightStatusRecord]
     @State private var showingAdd = false
@@ -131,6 +132,16 @@ struct TripsListView: View {
             .navigationTitle(shown.isEmpty ? filter.rawValue : "")
             .navigationBarTitleDisplayMode(.inline)
             .onReceive(clock) { now = $0 }
+            // Fill in real routes for every trip on this tab — active and past —
+            // so their maps draw the true path (a road trip's roads, an Indian
+            // train's rail line) without needing the trip's detail view to be
+            // opened first. No tracker is passed, so flight-track fetches (which
+            // spend FR24 credits) stay confined to the detail view; the free
+            // road-trip and train routing runs here. Re-runs when the tab's set
+            // of trips changes; RouteRefresher no-ops legs already routed.
+            .task(id: shown.map(\.persistentModelID)) {
+                await RouteRefresher.refresh(shown.flatMap(\.displaySegments), in: context)
+            }
             .navigationDestination(item: $selectedTrip) { TripDetailView(trip: $0) }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
