@@ -14,11 +14,37 @@
 			remoteGlobalIDString = 1B3D7C8F30033F910041BBB1;
 			remoteInfo = "Runnit iOS";
 		};
+		FADE0000000000000000BB0E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1B3D7C8830033F910041BBB1 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FADE0000000000000000BB04;
+			remoteInfo = RunnitWidgets;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXBuildFile section */
+		FADE0000000000000000BB0C /* RunnitWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = FADE0000000000000000BB03 /* RunnitWidgets.appex */; platformFilters = (ios, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		FADE0000000000000000BB0B /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				FADE0000000000000000BB0C /* RunnitWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		1B3D7C9030033F910041BBB1 /* Runnit iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Runnit iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		FADE0000000000000000AA03 /* Runnit iOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Runnit iOSTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		FADE0000000000000000BB03 /* RunnitWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = RunnitWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -30,6 +56,16 @@
 		FADE0000000000000000AA01 /* Runnit iOSTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = "Runnit iOSTests";
+			sourceTree = "<group>";
+		};
+		FADE0000000000000000BB01 /* RunnitWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = RunnitWidgets;
+			sourceTree = "<group>";
+		};
+		FADE0000000000000000BB02 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -49,6 +85,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FADE0000000000000000BB09 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -56,6 +99,8 @@
 			isa = PBXGroup;
 			children = (
 				1B3D7C9230033F910041BBB1 /* Runnit iOS */,
+				FADE0000000000000000BB02 /* Shared */,
+				FADE0000000000000000BB01 /* RunnitWidgets */,
 				FADE0000000000000000AA01 /* Runnit iOSTests */,
 				1B3D7C9130033F910041BBB1 /* Products */,
 			);
@@ -65,6 +110,7 @@
 			isa = PBXGroup;
 			children = (
 				1B3D7C9030033F910041BBB1 /* Runnit iOS.app */,
+				FADE0000000000000000BB03 /* RunnitWidgets.appex */,
 				FADE0000000000000000AA03 /* Runnit iOSTests.xctest */,
 			);
 			name = Products;
@@ -80,13 +126,16 @@
 				1B3D7C8C30033F910041BBB1 /* Sources */,
 				1B3D7C8D30033F910041BBB1 /* Frameworks */,
 				1B3D7C8E30033F910041BBB1 /* Resources */,
+				FADE0000000000000000BB0B /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				FADE0000000000000000BB0D /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				1B3D7C9230033F910041BBB1 /* Runnit iOS */,
+				FADE0000000000000000BB02 /* Shared */,
 			);
 			name = "Runnit iOS";
 			packageProductDependencies = (
@@ -117,6 +166,29 @@
 			productReference = FADE0000000000000000AA03 /* Runnit iOSTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		FADE0000000000000000BB04 /* RunnitWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FADE0000000000000000BB05 /* Build configuration list for PBXNativeTarget "RunnitWidgets" */;
+			buildPhases = (
+				FADE0000000000000000BB08 /* Sources */,
+				FADE0000000000000000BB09 /* Frameworks */,
+				FADE0000000000000000BB0A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				FADE0000000000000000BB01 /* RunnitWidgets */,
+				FADE0000000000000000BB02 /* Shared */,
+			);
+			name = RunnitWidgets;
+			packageProductDependencies = (
+			);
+			productName = RunnitWidgets;
+			productReference = FADE0000000000000000BB03 /* RunnitWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -133,6 +205,9 @@
 					FADE0000000000000000AA02 = {
 						CreatedOnToolsVersion = 26.6;
 						TestTargetID = 1B3D7C8F30033F910041BBB1;
+					};
+					FADE0000000000000000BB04 = {
+						CreatedOnToolsVersion = 26.6;
 					};
 				};
 			};
@@ -151,6 +226,7 @@
 			projectRoot = "";
 			targets = (
 				1B3D7C8F30033F910041BBB1 /* Runnit iOS */,
+				FADE0000000000000000BB04 /* RunnitWidgets */,
 				FADE0000000000000000AA02 /* Runnit iOSTests */,
 			);
 		};
@@ -158,6 +234,13 @@
 
 /* Begin PBXResourcesBuildPhase section */
 		1B3D7C8E30033F910041BBB1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FADE0000000000000000BB0A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -181,6 +264,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FADE0000000000000000BB08 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -188,6 +278,14 @@
 			isa = PBXTargetDependency;
 			target = 1B3D7C8F30033F910041BBB1 /* Runnit iOS */;
 			targetProxy = FADE0000000000000000AA0A /* PBXContainerItemProxy */;
+		};
+		FADE0000000000000000BB0D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			platformFilters = (
+				ios,
+			);
+			target = FADE0000000000000000BB04 /* RunnitWidgets */;
+			targetProxy = FADE0000000000000000BB0E /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -444,6 +542,68 @@
 			};
 			name = Release;
 		};
+		FADE0000000000000000BB06 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9H2AU253G4;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Runnit;
+				INFOPLIST_KEY_NSExtensionPointIdentifier = "com.apple.widgetkit-extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Runnit.Runnit-iOS.RunnitWidgets";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		FADE0000000000000000BB07 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9H2AU253G4;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Runnit;
+				INFOPLIST_KEY_NSExtensionPointIdentifier = "com.apple.widgetkit-extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Runnit.Runnit-iOS.RunnitWidgets";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -470,6 +630,15 @@
 			buildConfigurations = (
 				FADE0000000000000000AA05 /* Debug */,
 				FADE0000000000000000AA06 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FADE0000000000000000BB05 /* Build configuration list for PBXNativeTarget "RunnitWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FADE0000000000000000BB06 /* Debug */,
+				FADE0000000000000000BB07 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

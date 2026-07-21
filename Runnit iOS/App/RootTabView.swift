@@ -53,6 +53,9 @@ struct RootTabView: View {
         .tabBarMinimizeBehavior(.onScrollDown)
         .tint(.cyan)
         .preferredColorScheme(appearance.colorScheme)
+        // Zero-sized and non-interactive: it only mirrors the live trips onto
+        // the Lock Screen, and must run regardless of the selected tab.
+        .background(TripLiveActivitySync())
     }
 }
 
