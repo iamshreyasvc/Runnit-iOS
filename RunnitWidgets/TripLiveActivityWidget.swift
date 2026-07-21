@@ -69,6 +69,7 @@ struct TripLiveActivityWidget: Widget {
                     .font(.caption2)
                     .foregroundStyle(tint)
                     .monospacedDigit()
+                    .frame(maxWidth: 46)
             } minimal: {
                 Image(systemName: state.icon)
                     .foregroundStyle(tint)
@@ -79,12 +80,17 @@ struct TripLiveActivityWidget: Widget {
 
     /// Just the clock in the Island's trailing slot — the words that wrap it on
     /// the full card don't fit here, and the number is the point.
+    ///
+    /// A bare `Text(timerInterval:)` reserves room for the widest value it could
+    /// ever hold, which stretches the collapsed pill to nearly the full width of
+    /// the screen for a countdown that will read "42:10". The caller caps it.
+    /// Nothing at all once there's no countdown left: the leading checkmark
+    /// already says the trip is done, and "Complete" spelled out is the widest
+    /// thing here for the least news.
     @ViewBuilder
     private func compactCountdown(_ state: TripActivityAttributes.ContentState) -> some View {
         if let range = state.countdownRange {
             Text(timerInterval: range, countsDown: true)
-        } else if let fallback = state.countdownFallback {
-            Text(fallback)
         }
     }
 }
