@@ -720,8 +720,8 @@ extension AddTripFlowView {
             trainCountryOption(
                 title: "Indian Railways",
                 blurb: "Auto-fill stations and times from the train number.",
-                symbol: "sparkle.magnifyingglass",
-                selected: selectedRailway == .indian
+                selected: selectedRailway == .indian,
+                icon: { countryIcon(.india) }
             ) {
                 selectedRailway = .indian
                 next()
@@ -729,8 +729,8 @@ extension AddTripFlowView {
             trainCountryOption(
                 title: "Amtrak",
                 blurb: "Auto-fill stations and times from the train number.",
-                symbol: "sparkle.magnifyingglass",
-                selected: selectedRailway == .amtrak
+                selected: selectedRailway == .amtrak,
+                icon: { countryIcon(.unitedStates) }
             ) {
                 selectedRailway = .amtrak
                 next()
@@ -738,8 +738,8 @@ extension AddTripFlowView {
             trainCountryOption(
                 title: "Another railway",
                 blurb: "Enter the details yourself.",
-                symbol: "square.and.pencil",
-                selected: selectedRailway == .manual
+                selected: selectedRailway == .manual,
+                icon: { symbolIcon("square.and.pencil") }
             ) {
                 selectedRailway = .manual
                 next()
@@ -747,14 +747,28 @@ extension AddTripFlowView {
         }
     }
 
-    private func trainCountryOption(
-        title: String, blurb: String, symbol: String, selected: Bool, action: @escaping () -> Void
+    /// An SF Symbol railway icon, tinted to the train accent.
+    private func symbolIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 22, weight: .semibold))
+            .foregroundStyle(TripType.train.accent)
+    }
+
+    /// An outline of the country a railway serves, stroked in the train accent —
+    /// India for Indian Railways, the US for Amtrak.
+    private func countryIcon(_ outline: CountryOutline) -> some View {
+        outline
+            .stroke(TripType.train.accent, style: StrokeStyle(lineWidth: 2, lineJoin: .round))
+            .padding(11)
+    }
+
+    private func trainCountryOption<Icon: View>(
+        title: String, blurb: String, selected: Bool,
+        @ViewBuilder icon: () -> Icon, action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 16) {
-                Image(systemName: symbol)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(TripType.train.accent)
+                icon()
                     .frame(width: 52, height: 52)
                     .background(TripType.train.accent.opacity(0.16), in: .rect(cornerRadius: 15))
                 VStack(alignment: .leading, spacing: 3) {
@@ -986,7 +1000,7 @@ extension AddTripFlowView {
         switch step {
         case .type:        return legs.isEmpty ? "Plan a new trip" : "Add another leg"
         case .flightLookup: return "What's your flight?"
-        case .trainCountry: return "Is this an Indian train?"
+        case .trainCountry: return "Which railway is this?"
         case .trainLookup: return "What's your train?"
         case .origin:      return "Where are you starting?"
         case .destination: return "And where to?"
