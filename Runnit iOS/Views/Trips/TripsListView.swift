@@ -119,10 +119,16 @@ struct TripsListView: View {
                     emptyState
                 } else {
                     GeometryReader { proxy in
-                        ZStack(alignment: .bottom) {
+                        let layout = MapLayout(containerSize: proxy.size)
+                        ZStack(alignment: layout == .sideBySide ? .bottomLeading : .bottom) {
                             mapBackground
-                            mapTopControls
-                            tripSheet(height: proxy.size.height)
+                            mapTopControls(layout: layout)
+                            switch layout {
+                            case .stacked:
+                                tripSheet(height: proxy.size.height)
+                            case .sideBySide:
+                                tripPanel(layout: layout)
+                            }
                         }
                     }
                 }
@@ -200,7 +206,7 @@ struct TripsListView: View {
             // Cross-fade the bodies with opacity so the shared pill's
             // matchedGeometry morph is the star of the transition.
             if sheetDetent == .minimized && !dragging {
-                minimizedPill
+                minimizedPill(layout: .stacked)
                     .transition(.opacity)
             } else {
                 expandedSheet(sheetHeight: live, containerHeight: height)
@@ -215,28 +221,8 @@ struct TripsListView: View {
     private func expandedSheet(sheetHeight: CGFloat, containerHeight: CGFloat) -> some View {
         VStack(spacing: 0) {
             grabHandle(height: containerHeight)
-            // Pinned header: the title pill, with the year filter inline beside it
-            // as a dropdown that opens a bubble popover.
-            HStack(spacing: 10) {
-                filterPill(minimized: false)
-                Spacer(minLength: 0)
-                if !years.isEmpty { yearDropdown }
-            }
-            .padding(.horizontal)
-            .padding(.bottom, 12)
-
-            ScrollView {
-                VStack(spacing: 16) {
-                    if showsLiveSection {
-                        ActiveTripsBox(trips: shown) { selectedTrip = $0 }
-                    }
-                    cardsList
-                }
-                .padding(.horizontal)
-                .padding(.top, 2)
-                .padding(.bottom, 48)
-            }
-            .scrollIndicators(.hidden)
+            panelHeader(layout: .stacked)
+            panelContent
         }
         .frame(height: sheetHeight, alignment: .top)
         .frame(maxWidth: .infinity)
@@ -248,9 +234,104 @@ struct TripsListView: View {
         }
     }
 
+    /// Pinned header shared by the bottom sheet and the landscape panel: the
+    /// title pill and the year filter dropdown. The sheet has the width to run
+    /// them inline; the narrower landscape panel spends its top row on the title
+    /// and the collapse control, and drops the year filter onto its own line.
+    private func panelHeader(layout: MapLayout) -> some View {
+        let stacked = layout == .stacked
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                filterPill()
+                Spacer(minLength: 0)
+                if stacked {
+                    if !years.isEmpty { yearDropdown }
+                } else {
+                    collapseButton
+                }
+            }
+            if !stacked, !years.isEmpty {
+                yearDropdown
+            }
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 12)
+    }
+
+    /// The scrolling body shared by the bottom sheet and the landscape panel.
+    private var panelContent: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                if showsLiveSection {
+                    ActiveTripsBox(trips: shown) { selectedTrip = $0 }
+                }
+                cardsList
+            }
+            .padding(.horizontal)
+            .padding(.top, 2)
+            .padding(.bottom, 48)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    // MARK: Landscape side panel
+
+    /// The landscape counterpart of the trip sheet: a floating glass card on the
+    /// leading edge, full height, with the map fully visible beside it. Collapses
+    /// to the same floating pill — swipe the panel toward the leading edge (or
+    /// tap the chevron) to tuck it away, and tap the pill to bring it back.
+    private func tripPanel(layout: MapLayout) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            if sheetDetent == .minimized {
+                minimizedPill(layout: layout)
+                    .padding(.leading)
+                    .transition(.opacity)
+            } else {
+                VStack(spacing: 0) {
+                    panelHeader(layout: layout)
+                        .padding(.top, 14)
+                    panelContent
+                }
+                .frame(width: layout.panelWidth)
+                .background {
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .shadow(color: .black.opacity(0.18), radius: 14, x: 3)
+                }
+                .padding(.leading)
+                .padding(.vertical, 8)
+                .gesture(
+                    DragGesture(coordinateSpace: .global).onEnded { value in
+                        if value.translation.width < -40 { sheetDetent = .minimized }
+                    }
+                )
+                .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        .animation(.snappy(duration: 0.32), value: sheetDetent)
+    }
+
+    /// Tucks the landscape panel away, leaving the whole map clear.
+    private var collapseButton: some View {
+        Button {
+            sheetDetent = .minimized
+        } label: {
+            Image(systemName: "chevron.left")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.secondary)
+                .padding(10)
+                .glassEffect(.regular, in: .circle)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Hide trip list")
+    }
+
     /// The tab title as a liquid-glass pill — icon, "Upcoming"/"Past", and count.
     /// Shares a matchedGeometry id so it morphs into the minimized floating pill.
-    private func filterPill(minimized: Bool) -> some View {
+    /// `chevron` is the glyph hinting how to restore the collapsed list —
+    /// omitted while the sheet/panel is open.
+    private func filterPill(chevron: String? = nil) -> some View {
         HStack(spacing: 10) {
             Image(systemName: filter.symbol)
                 .font(.headline.weight(.bold))
@@ -263,8 +344,8 @@ struct TripsListView: View {
                 .padding(.horizontal, 9)
                 .padding(.vertical, 3)
                 .background(.secondary.opacity(0.15), in: .capsule)
-            if minimized {
-                Image(systemName: "chevron.up")
+            if let chevron {
+                Image(systemName: chevron)
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.secondary)
             }
@@ -305,14 +386,19 @@ struct TripsListView: View {
     /// The collapsed sheet: the title pill floating at the bottom. Tap it, or
     /// swipe it up, to bring the list back. It's the same pill as the sheet's
     /// title, so minimizing/restoring morphs between the two positions.
-    private var minimizedPill: some View {
-        filterPill(minimized: true)
+    private func minimizedPill(layout: MapLayout) -> some View {
+        let sideways = layout == .sideBySide
+        return filterPill(chevron: sideways ? "chevron.right" : "chevron.up")
             .padding(.bottom, 10)
             .contentShape(.capsule)
             .onTapGesture { sheetDetent = .medium }
             .gesture(
+                // Restore with a swipe back out of the edge it tucked into.
                 DragGesture().onEnded { value in
-                    if value.translation.height < -24 { sheetDetent = .medium }
+                    let restored = sideways
+                        ? value.translation.width > 24
+                        : value.translation.height < -24
+                    if restored { sheetDetent = .medium }
                 }
             )
     }
@@ -321,8 +407,9 @@ struct TripsListView: View {
 
     /// Floating controls above the map: the live badge (or a tapped route's
     /// preview) on the left and the full-screen expand button on the right. Kept
-    /// out of the map's ignored safe area so they clear the navigation bar.
-    private var mapTopControls: some View {
+    /// out of the map's ignored safe area so they clear the navigation bar, and
+    /// in landscape inset past the side panel so nothing hides beneath it.
+    private func mapTopControls(layout: MapLayout) -> some View {
         VStack(spacing: 8) {
             HStack(alignment: .top) {
                 if previewTrip == nil, let status = liveStatus {
@@ -361,9 +448,11 @@ struct TripsListView: View {
             }
         }
         .padding(.horizontal)
+        .padding(.leading, layout.leadingInset(collapsed: sheetDetent == .minimized))
         .padding(.top, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(.snappy(duration: 0.3), value: previewTrip?.persistentModelID)
+        .animation(.snappy(duration: 0.32), value: sheetDetent)
     }
 
     /// A clean vertical +/− zoom control, styled to match the round map buttons.
@@ -765,7 +854,13 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
 }
 
 #if DEBUG
-#Preview {
+#Preview("Portrait") {
+    TripsListView(filter: .upcoming)
+        .modelContainer(PreviewData.container)
+        .environment(FlightTracker())
+}
+
+#Preview("Landscape", traits: .landscapeLeft) {
     TripsListView(filter: .upcoming)
         .modelContainer(PreviewData.container)
         .environment(FlightTracker())
