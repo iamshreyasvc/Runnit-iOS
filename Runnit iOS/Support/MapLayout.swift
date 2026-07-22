@@ -24,13 +24,21 @@ enum MapLayout {
     }
 
     /// Width of the leading panel. Wide enough for a trip card to keep its
-    /// two-line layout, narrow enough to leave the map the majority of a
+    /// two-line layout, narrow enough to leave the map the clear majority of a
     /// landscape iPhone.
-    var panelWidth: CGFloat { 340 }
+    var panelWidth: CGFloat { 300 }
+
+    /// Gap between the panel and the screen edges, and between the panel and the
+    /// map's floating controls.
+    var gutter: CGFloat { 12 }
 
     /// Inset the map's floating controls need so they clear the panel.
     func leadingInset(collapsed: Bool) -> CGFloat {
         guard self == .sideBySide, !collapsed else { return 0 }
-        return panelWidth + 12
+        return panelWidth + gutter * 2
     }
+
+    /// The panel is far narrower than the bottom sheet, so its header shrinks its
+    /// title and filter chips to keep them on a single row.
+    var usesCompactChrome: Bool { self == .sideBySide }
 }
