@@ -98,6 +98,25 @@ final class FlightStatusRecord {
     /// The API answered but had no matching flight (negative cache).
     var didFindData: Bool = true
 
+    // MARK: CloudKit sync
+    //
+    // Snapshots ride along in their trip's zone so everyone invited sees the
+    // same gate and delay without each device spending the shared API budget.
+
+    /// Last local write, for last-writer-wins conflict resolution.
+    var updatedAt: Date = Date()
+
+    /// The trip zone this snapshot belongs in. There's no relationship to walk
+    /// (records are keyed by `segmentID` alone), so the zone is stored directly.
+    var zoneName: String?
+
+    /// Archived CKRecord system fields.
+    var ckSystemFields: Data?
+
+    /// The `updatedAt` CloudKit last confirmed for this snapshot. See
+    /// `Trip.syncedAt`.
+    var syncedAt: Date?
+
     init(segmentID: UUID) {
         self.segmentID = segmentID
     }
@@ -171,6 +190,9 @@ final class FlightStatusRecord {
         fetchedAt = Date()
         didFindData = true
         isFinal = snapshot.phase.isFinal
+        // Stamped here rather than at each call site, so a snapshot always
+        // syncs to everyone on the trip whichever path refreshed it.
+        updatedAt = Date()
     }
 
     /// Minutes late, or nil when it isn't late (or we can't tell). Early
@@ -185,6 +207,7 @@ final class FlightStatusRecord {
     func markEmpty() {
         fetchedAt = Date()
         didFindData = false
+        updatedAt = Date()
     }
 
     /// Whether this snapshot should drive the UI for `segment`: a captured final

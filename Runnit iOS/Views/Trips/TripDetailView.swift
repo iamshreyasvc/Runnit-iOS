@@ -19,11 +19,16 @@ struct TripDetailView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(FlightTracker.self) private var tracker
+    @Environment(SyncEngine.self) private var sync
 
     @Query private var statusRecords: [FlightStatusRecord]
 
     @State private var showingEdit = false
     @State private var showingDeleteConfirm = false
+    @State private var showingShare = false
+    @State private var showingParticipants = false
+    @State private var showingLeaveConfirm = false
+    @State private var leaveError: String?
     @State private var showingFullMap = false
     @State private var expandedLegs: Set<UUID> = []
 
@@ -64,12 +69,30 @@ struct TripDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarMenu }
         .sheet(isPresented: $showingEdit) { AddEditTripView(trip: trip) }
+        .sheet(isPresented: $showingShare) { ShareTripSheet(trip: trip) }
+        .sheet(isPresented: $showingParticipants) { TripParticipantsView(trip: trip) }
+        .confirmationDialog("Leave this trip?", isPresented: $showingLeaveConfirm,
+                            titleVisibility: .visible) {
+            Button("Leave", role: .destructive) { Task { await leaveTrip() } }
+        } message: {
+            Text("It stays on \(trip.ownerParticipant?.shortName ?? "the owner")'s device. You can be invited again later.")
+        }
+        .alert("Couldn't leave the trip",
+               isPresented: .init(get: { leaveError != nil },
+                                  set: { if !$0 { leaveError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(leaveError ?? "")
+        }
         .fullScreenCover(isPresented: $showingFullMap) {
             FullMapView(trips: [trip], title: navigationTitle)
         }
         .confirmationDialog("Delete this trip?", isPresented: $showingDeleteConfirm,
                             titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
+                // Note the CloudKit records first — once the objects are gone
+                // there's nothing left to work out what to delete on the server.
+                sync.willDelete(trip)
                 context.delete(trip)
                 try? context.save()
                 dismiss()
@@ -91,6 +114,18 @@ struct TripDetailView: View {
         }
     }
 
+    /// Stop participating in a trip someone shared with us. The trip only leaves
+    /// this device once CloudKit confirms it, so a failure here doesn't lose the
+    /// copy we can still read.
+    private func leaveTrip() async {
+        do {
+            try await ShareManager().leave(trip, in: context)
+            dismiss()
+        } catch {
+            leaveError = error.localizedDescription
+        }
+    }
+
     /// Every place the trip passes through, in order: each leg's origin, its
     /// stops, its destination. Changes whenever a stop or leg is added, edited,
     /// reordered, or removed.
@@ -98,12 +133,37 @@ struct TripDetailView: View {
         trip.displaySegments.flatMap(\.routePlaces)
     }
 
+    /// The menu is built from what this person may actually do. A view-only
+    /// guest is offered neither Edit nor Delete — only the way out.
     private var toolbarMenu: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             Menu {
-                Button { showingEdit = true } label: { Label("Edit", systemImage: "pencil") }
-                Button(role: .destructive) { showingDeleteConfirm = true } label: {
-                    Label("Delete", systemImage: "trash")
+                // Sharing needs the server for every step — creating the share,
+                // sending the invite, changing access. Without an iCloud account
+                // none of it can run, so the menu doesn't offer it at all.
+                if trip.isOwnedByMe && sync.isCloudAvailable {
+                    Button { showingShare = true } label: {
+                        Label(trip.isShared ? "Invite More People" : "Share Trip",
+                              systemImage: "person.badge.plus")
+                    }
+                    if trip.isShared {
+                        Button { showingParticipants = true } label: {
+                            Label("Manage People", systemImage: "person.2.fill")
+                        }
+                    }
+                    Divider()
+                }
+                if trip.canEdit {
+                    Button { showingEdit = true } label: { Label("Edit", systemImage: "pencil") }
+                }
+                if trip.isOwnedByMe {
+                    Button(role: .destructive) { showingDeleteConfirm = true } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                } else {
+                    Button(role: .destructive) { showingLeaveConfirm = true } label: {
+                        Label("Leave Trip", systemImage: "person.fill.xmark")
+                    }
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -281,9 +341,13 @@ struct TripDetailView: View {
                 HStack(spacing: 10) {
                     titlePill(minimized: false)
                     Spacer(minLength: 0)
+                    TripSyncBadge(state: trip.syncState.resolved(cloudAvailable: sync.isCloudAvailable),
+                                  size: 13)
                     activeShortcut
+                    shareControl
                     statusPill
                 }
+                accessBanner
                 // The one thing that matters mid-trip, pinned above the scroll.
                 if isUnderway {
                     TripStatusCardView(trip: trip)
@@ -462,6 +526,66 @@ struct TripDetailView: View {
         }
     }
 
+    // MARK: Sharing
+
+    /// The trip's people, sitting level with the title pill.
+    ///
+    /// An unshared trip of our own shows an invite button instead — sharing is a
+    /// headline feature, and burying it in the overflow menu would mean nobody
+    /// finds it. Once shared, the same slot becomes the faces on the trip, which
+    /// tap through to manage them.
+    @ViewBuilder
+    private var shareControl: some View {
+        if trip.isShared {
+            // Who's on the trip is worth showing even offline — it's cached and
+            // still true. Tapping through to manage them isn't, since every
+            // action in there needs the server.
+            let faces = ParticipantStack(participants: trip.collaborators, size: 30)
+                .frame(height: 46)
+                .padding(.horizontal, 10)
+                .glassEffect(.regular, in: .capsule)
+
+            if sync.isCloudAvailable {
+                Button { showingParticipants = true } label: { faces }
+                    .buttonStyle(.plain)
+            } else {
+                faces
+            }
+        } else if trip.isOwnedByMe && sync.isCloudAvailable {
+            // No account means no invite can be sent, so don't offer one —
+            // the trip's cloud badge and the Account screen explain why.
+            shortcutButton("person.badge.plus", tint: trip.type.accent) {
+                showingShare = true
+            }
+        }
+    }
+
+    /// A quiet line explaining a trip we don't fully control, shown instead of
+    /// leaving the missing Edit and Add Stop affordances unexplained.
+    @ViewBuilder
+    private var accessBanner: some View {
+        if !trip.isOwnedByMe {
+            HStack(spacing: 7) {
+                Image(systemName: trip.canEdit ? "person.2.fill" : "lock.fill")
+                    .font(.caption2.weight(.bold))
+                Text(accessBannerText)
+                    .font(.caption)
+                    .lineLimit(1)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .glassEffect(.regular, in: .capsule)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var accessBannerText: String {
+        let owner = trip.ownerParticipant?.shortName
+        let who = owner.map { "Shared with you by \($0)" } ?? "Shared with you"
+        return trip.canEdit ? who : "\(who) · View only"
+    }
+
     /// A liquid-glass icon button sized to sit level with the title pill.
     private func shortcutButton(_ icon: String, tint: Color,
                                 action: @escaping () -> Void) -> some View {
@@ -605,26 +729,29 @@ private struct LiveDot: View {
 
 #if DEBUG
 private extension View {
-    func flightTrackingPreviewEnv() -> some View {
+    /// The observable services this screen reads. Neither does any work until
+    /// asked, so previews stay offline.
+    func tripDetailPreviewEnv() -> some View {
         environment(FlightTracker())
+            .environment(PreviewData.sync)
     }
 }
 
 #Preview("Single") {
     NavigationStack { TripDetailView(trip: .sampleFlight) }
         .modelContainer(PreviewData.container)
-        .flightTrackingPreviewEnv()
+        .tripDetailPreviewEnv()
 }
 
 #Preview("Multi-modal") {
     NavigationStack { TripDetailView(trip: .sampleMultiModal) }
         .modelContainer(PreviewData.container)
-        .flightTrackingPreviewEnv()
+        .tripDetailPreviewEnv()
 }
 
 #Preview("Connection") {
     NavigationStack { TripDetailView(trip: .sampleConnection) }
         .modelContainer(PreviewData.container)
-        .flightTrackingPreviewEnv()
+        .tripDetailPreviewEnv()
 }
 #endif

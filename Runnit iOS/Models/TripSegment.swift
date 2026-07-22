@@ -55,6 +55,16 @@ final class TripSegment {
     /// Position of this leg within its trip (0-based).
     var order: Int = 0
 
+    /// Last local edit, for last-writer-wins conflict resolution on sync.
+    var updatedAt: Date = Date()
+
+    /// Archived CKRecord system fields, so an update keeps the server's change
+    /// tag instead of overwriting a newer copy blind.
+    var ckSystemFields: Data?
+
+    /// The `updatedAt` CloudKit last confirmed for this leg. See `Trip.syncedAt`.
+    var syncedAt: Date?
+
     /// Owning trip (inverse of `Trip.segments`).
     var trip: Trip?
 

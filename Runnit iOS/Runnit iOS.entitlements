@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.developer.icloud-services</key>
+	<array>
+		<string>CloudKit</string>
+	</array>
+	<key>com.apple.developer.icloud-container-identifiers</key>
+	<array>
+		<string>iCloud.Runnit.Runnit-iOS</string>
+	</array>
+
+	<!--
+	  NOTE: `aps-environment` is deliberately absent.
+
+	  Silent pushes are how CKSyncEngine hears about a change made on someone
+	  else's device promptly, so this key is worth adding — but it can't just be
+	  written here. Push Notifications has to be enabled on the target's
+	  Signing & Capabilities tab, which is what registers it against the
+	  provisioning profile; adding the key alone fails device builds with
+	  "provisioning profile doesn't include the Push Notifications capability".
+
+	  Without it sync still works, it just waits for a fetch: launch, returning
+	  to the foreground, or pull-to-refresh. Add the capability in Xcode and
+	  this key comes back with it.
+	-->
+</dict>
+</plist>

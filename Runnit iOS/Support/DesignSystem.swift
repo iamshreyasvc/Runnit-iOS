@@ -165,6 +165,120 @@ struct InfoChip: View {
     }
 }
 
+extension ShareParticipantSummary {
+    /// A stable color for this person, drawn from the same palette the profile
+    /// avatar offers. Derived from the display name so someone keeps the same
+    /// color on every screen and on every device — a roster that reshuffles its
+    /// colors reads as a different set of people.
+    var accent: Color {
+        let palette = ProfileAccent.allCases
+        let hash = displayName.unicodeScalars.reduce(into: 5_381) { total, scalar in
+            total = total &* 33 &+ Int(scalar.value)
+        }
+        return palette[abs(hash) % palette.count].color
+    }
+}
+
+/// A small glyph saying whether a trip has reached iCloud.
+///
+/// Quiet, but not invisible: sync is background machinery and shouldn't compete
+/// with the countdown or the route, yet a `.tertiary` glyph on the dark glass
+/// couldn't be seen at all. `.secondary` on a faint filled circle keeps it
+/// legible against both the glass cards and the map.
+///
+/// All three states show something. Hiding the local-only case made the badge
+/// disappear entirely on a device full of demo trips — and "this one isn't in
+/// iCloud" is the honest answer for them, not something to conceal.
+struct TripSyncBadge: View {
+    let state: TripSyncState
+    var size: CGFloat = 12
+
+    private var symbol: String {
+        switch state {
+        case .saved:       return "checkmark.icloud.fill"
+        case .pending:     return "arrow.up.icloud"
+        case .unavailable: return "exclamationmark.icloud"
+        case .localOnly:   return "icloud.slash"
+        }
+    }
+
+    private var label: String {
+        switch state {
+        case .saved:       return "Saved to iCloud"
+        case .pending:     return "Waiting to save to iCloud"
+        case .unavailable: return "Not saved — iCloud isn't set up"
+        case .localOnly:   return "Not saved to iCloud"
+        }
+    }
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: size, weight: .semibold))
+            // Monochrome on purpose. A warning tint would be wrong for both
+            // non-saved states: demo trips are local by design, and "pending"
+            // is the permanent resting state whenever iCloud isn't signed in.
+            // The glyph carries the meaning; the disc carries the visibility.
+            .foregroundStyle(.secondary)
+            .frame(width: size * 2, height: size * 2)
+            .background(.white.opacity(0.08), in: .circle)
+            .accessibilityLabel(label)
+    }
+}
+
+/// The people on a shared trip, as overlapping monogram avatars.
+///
+/// The same idiom as `TripCardView`'s multi-modal mode chain — discs overlapped
+/// and ringed against the background — so a shared trip reads as the app's own
+/// visual language rather than a bolted-on badge. Beyond `visibleLimit` the
+/// remainder collapses into a "+N" disc, because the count is the useful part
+/// once a trip has more people than the card has room for.
+struct ParticipantStack: View {
+    let participants: [ShareParticipantSummary]
+    var size: CGFloat = 22
+    var visibleLimit: Int = 3
+
+    private var visible: [ShareParticipantSummary] {
+        Array(participants.prefix(visibleLimit))
+    }
+
+    private var overflow: Int {
+        max(0, participants.count - visibleLimit)
+    }
+
+    var body: some View {
+        HStack(spacing: -size * 0.3) {
+            ForEach(visible) { participant in
+                ProfileAvatar(name: participant.name ?? "",
+                              accent: participant.accent,
+                              size: size)
+                    // A pending invite is a lighter presence than someone who
+                    // has actually joined.
+                    .opacity(participant.acceptance == .accepted ? 1 : 0.55)
+                    .overlay(Circle().strokeBorder(.background, lineWidth: 1.5))
+            }
+            if overflow > 0 {
+                Text("+\(overflow)")
+                    .font(.system(size: size * 0.42, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .frame(width: size, height: size)
+                    .glassEffect(.regular, in: .circle)
+                    .overlay(Circle().strokeBorder(.background, lineWidth: 1.5))
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var accessibilityLabel: String {
+        let names = participants.map(\.displayName)
+        switch names.count {
+        case 0:  return "Not shared"
+        case 1:  return "Shared with \(names[0])"
+        default: return "Shared with \(names.count) people"
+        }
+    }
+}
+
 enum Format {
     /// Distance from meters, honoring the user's distance-unit preference.
     static func distance(_ meters: Double) -> String {

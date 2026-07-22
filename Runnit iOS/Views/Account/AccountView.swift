@@ -21,6 +21,8 @@ struct AccountView: View {
     @AppStorage(PrefKey.avatarTint) private var avatarTintRaw = ProfileAccent.cyan.rawValue
     @AppStorage(PrefKey.flightAutoRefresh) private var flightAutoRefresh = false
 
+    @Environment(SyncEngine.self) private var sync
+
     @State private var editingProfile = false
 
     private var accent: Color { (ProfileAccent(rawValue: avatarTintRaw) ?? .cyan).color }
@@ -163,6 +165,7 @@ struct AccountView: View {
             GlassEffectContainer(spacing: 16) {
                 VStack(spacing: 16) {
                     profileGroup
+                    iCloudGroup
                     preferencesGroup
                     flightTrackingGroup
                     aboutGroup
@@ -227,6 +230,101 @@ struct AccountView: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(.vertical, 11)
+    }
+
+    // MARK: iCloud group — sync status
+    //
+    // Sync is invisible when it works, which is exactly why it needs a place to
+    // say so: without this, a trip that silently stopped uploading — or an
+    // account that was never signed in — looks identical to everything being
+    // fine, and nobody can report what they can't see.
+
+    private var iCloudGroup: some View {
+        VStack(spacing: 0) {
+            groupHeader("iCloud", systemImage: "icloud.fill") {
+                if sync.canSyncNow {
+                    Button("Sync Now") { Task { await sync.syncNow() } }
+                        .font(.subheadline.weight(.semibold))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(accent)
+                }
+            }
+            .padding(.bottom, 4)
+
+            HStack(spacing: 12) {
+                syncIcon
+                    .frame(width: 26)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(syncTitle)
+                    if let detail = syncDetail {
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 12)
+            }
+            .padding(.vertical, 11)
+
+            if let hint = syncHint {
+                Text(hint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, 4)
+            }
+        }
+        .padding(16)
+        .glassEffect(.regular, in: .rect(cornerRadius: 26))
+    }
+
+    @ViewBuilder
+    private var syncIcon: some View {
+        switch sync.state {
+        case .syncing:
+            ProgressView().controlSize(.small)
+        case .idle:
+            Image(systemName: "checkmark.icloud.fill").foregroundStyle(accent)
+        case .offline:
+            Image(systemName: "icloud.slash.fill").foregroundStyle(.orange)
+        case .noAccount:
+            Image(systemName: "exclamationmark.icloud.fill").foregroundStyle(.orange)
+        case .failed:
+            Image(systemName: "exclamationmark.icloud.fill").foregroundStyle(.red)
+        }
+    }
+
+    private var syncTitle: String {
+        switch sync.state {
+        case .syncing:   return "Syncing…"
+        case .idle:      return sync.lastSyncedAt == nil ? "Ready to sync" : "Up to date"
+        case .offline:   return "Offline"
+        case .noAccount: return "Not signed in to iCloud"
+        case .failed:    return "Sync problem"
+        }
+    }
+
+    private var syncDetail: String? {
+        switch sync.state {
+        case .idle:
+            guard let last = sync.lastSyncedAt else { return nil }
+            return "Last synced \(Format.relative(last))"
+        case .failed(let message):
+            return message
+        default:
+            return nil
+        }
+    }
+
+    private var syncHint: String? {
+        switch sync.state {
+        case .offline:
+            return "Your trips are all here. Changes will upload when you're back online."
+        case .noAccount:
+            return "Sign in to iCloud in Settings to sync your trips across devices and invite people to them."
+        default:
+            return nil
+        }
     }
 
     // MARK: Preferences group
@@ -362,6 +460,7 @@ struct AccountView: View {
 #Preview {
     AccountView()
         .modelContainer(PreviewData.container)
+        .environment(PreviewData.sync)
         .preferredColorScheme(.dark)
 }
 #endif

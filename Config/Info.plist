@@ -13,5 +13,28 @@
 	  this file at build time — this file only adds what can't be expressed as a
 	  flat INFOPLIST_KEY_* build setting. Nothing currently qualifies.
 	-->
+
+	<!--
+	  CloudKit sharing. `CKSharingSupported` is what lets an invite link opened
+	  in Messages or Mail hand off to this app; the remote-notification
+	  background mode lets CloudKit's silent pushes wake the sync engines when a
+	  shared trip changes on someone else's device. Neither has an
+	  INFOPLIST_KEY_* equivalent, so they live here.
+	-->
+	<!--
+	  Master switch for CloudKit, read by `CloudContainer.isEnabled`.
+
+	  Off because iCloud is unavailable to free Apple developer accounts, and
+	  merely constructing a CKContainer without the entitlement crashes the app.
+	  Turn on together with the iCloud → CloudKit capability in Xcode.
+	-->
+	<key>RunnitCloudKitEnabled</key>
+	<false/>
+	<key>CKSharingSupported</key>
+	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 </dict>
 </plist>

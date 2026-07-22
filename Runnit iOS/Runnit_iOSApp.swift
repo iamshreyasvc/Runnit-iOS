@@ -12,10 +12,26 @@ import SwiftData
 struct Runnit_iOSApp: App {
     let container: ModelContainer
     @State private var flightTracker: FlightTracker
+    @State private var sync: SyncEngine
+    @Environment(\.scenePhase) private var scenePhase
+    // Only for accepting share invites and registering for silent pushes —
+    // neither has a SwiftUI equivalent.
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
         do {
-            container = try ModelContainer(for: Trip.self, TripSegment.self, FlightStatusRecord.self)
+            // SwiftData turns its own CloudKit sync on automatically as soon as
+            // the app carries the iCloud entitlement — and then refuses to load,
+            // because its mirroring demands every relationship be optional
+            // (`Trip.segments` isn't). We don't want that sync anyway: this app
+            // drives CloudKit itself through CKSyncEngine, so SwiftData doing it
+            // too would mean two engines writing the same records. `.none` says
+            // so explicitly rather than leaving it to entitlement side effects.
+            let configuration = ModelConfiguration(cloudKitDatabase: .none)
+            container = try ModelContainer(
+                for: Trip.self, TripSegment.self, FlightStatusRecord.self,
+                configurations: configuration
+            )
         } catch {
             fatalError("Failed to create ModelContainer: \(error)")
         }
@@ -25,16 +41,31 @@ struct Runnit_iOSApp: App {
         SampleSeeder.seedFlightPathSampleIfNeeded(container.mainContext)
         SampleSeeder.clearFlightRouteThrottleIfNeeded(container.mainContext)
         SampleSeeder.clearMismatchedFlightRecordsIfNeeded(container.mainContext)
+        SampleSeeder.flagLegacySamplesIfNeeded(container.mainContext)
 
         _flightTracker = State(initialValue: FlightTracker())
+        _sync = State(initialValue: SyncEngine(modelContainer: container))
     }
 
     var body: some Scene {
         WindowGroup {
             RootTabView()
                 .environment(flightTracker)
+                .environment(sync)
+                .task {
+                    // A cold launch from a share link can beat this; the
+                    // coordinator holds the invite until the engine exists.
+                    ShareAcceptanceCoordinator.shared.register(sync)
+                    await sync.start()
+                }
         }
         .modelContainer(container)
+        // Coming back to the app is the moment someone is most likely to be
+        // looking at a trip a travel companion just changed.
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task { await sync.start() }
+        }
     }
 }
 
@@ -46,6 +77,7 @@ enum SampleSeeder {
     private static let didSeedFlightPathKey = "runnit.didSeedFlightPathSample.v1"
     private static let didClearRouteThrottleKey = "runnit.didClearRouteThrottle.v1"
     private static let didClearMismatchedRecordsKey = "runnit.didClearMismatchedRecords.v1"
+    private static let didFlagSamplesKey = "runnit.didFlagLegacySamples.v1"
 
     @MainActor
     static func seedIfNeeded(_ context: ModelContext) {
@@ -56,6 +88,7 @@ enum SampleSeeder {
         let count = (try? context.fetchCount(FetchDescriptor<Trip>())) ?? 0
         if count == 0 {
             for trip in SampleSeeder.starterTrips() {
+                trip.isSample = true
                 context.insert(trip)
             }
             try? context.save()
@@ -86,6 +119,7 @@ enum SampleSeeder {
                         timeZoneIdentifier: "America/New_York")
 
         let sample = Trip.makeSampleConnection(origin: sfo, connectingAt: ohare, destination: jfk)
+        sample.trip.isSample = true
         context.insert(sample.trip)
         for record in sample.records {
             context.insert(record)
@@ -125,6 +159,7 @@ enum SampleSeeder {
                 operatorName: "Singapore Airlines", vehicleNumber: "SQ 22"
             )
         ])
+        trip.isSample = true
         context.insert(trip)
         for segment in trip.segments { context.insert(segment) }
         try? context.save()
@@ -170,6 +205,45 @@ enum SampleSeeder {
         }
         try? context.save()
         defaults.set(true, forKey: didClearMismatchedRecordsKey)
+    }
+
+    /// The titles the seeders give their demo trips.
+    private static let sampleTitles: Set<String> = [
+        "Coast Weekend", "Euro Loop", "Cherry Blossoms",
+        "Alps Getaway", "Chicago Connection", "Flight Path Test"
+    ]
+
+    /// Vehicle numbers identifying the seeded trips that ship with no title.
+    private static let sampleVehicleNumbers: Set<String> = ["UA 523", "BA 178", "AF 83"]
+
+    /// Whether a trip looks like one the seeders created.
+    ///
+    /// Installs seeded before `isSample` existed can't be told apart any other
+    /// way — the flag didn't exist when they were written. Matching on the
+    /// seeders' own titles and flight numbers recovers them. Deliberately
+    /// conservative: anything unmatched is treated as the traveler's own trip
+    /// and syncs, because wrongly withholding a real trip is the worse error.
+    static func isLikelySeededSample(_ trip: Trip) -> Bool {
+        let title = trip.title.trimmingCharacters(in: .whitespaces)
+        if !title.isEmpty { return sampleTitles.contains(title) }
+        guard let number = trip.displaySegments.first?.vehicleNumber else { return false }
+        return sampleVehicleNumbers.contains(number)
+    }
+
+    /// One-time step: flag the demo trips on installs that seeded before
+    /// `isSample` existed, so they stay on-device instead of uploading to the
+    /// traveler's iCloud account.
+    @MainActor
+    static func flagLegacySamplesIfNeeded(_ context: ModelContext) {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: didFlagSamplesKey) else { return }
+
+        let trips = (try? context.fetch(FetchDescriptor<Trip>())) ?? []
+        for trip in trips where !trip.isSample && isLikelySeededSample(trip) {
+            trip.isSample = true
+        }
+        try? context.save()
+        defaults.set(true, forKey: didFlagSamplesKey)
     }
 
     /// One-time upgrade: give any legacy Trip (stored before multi-modal legs
