@@ -1,6 +1,6 @@
 //
 //  TripActivityAttributes.swift
-//  Runnit iOS  +  RunnitWidgets  (shared — add to BOTH targets)
+//  Runnit iOS  (shared with RunnitWidgets)
 //
 //  The contract between the app (which starts, updates, and ends a Live Activity)
 //  and the widget extension (which draws it). Deliberately free of SwiftUI and of
@@ -8,8 +8,9 @@
 //  real `Color`s and SF Symbols, so nothing here drags UIKit/SwiftUI into the
 //  attributes payload that ActivityKit serializes.
 //
-//  IMPORTANT (Xcode setup): this one file must belong to the app target AND the
-//  widget-extension target. See SETUP.md.
+//  It lives under `Runnit iOS/Shared/` so it compiles into the app automatically.
+//  When you create the widget-extension target, also add this file to it (target
+//  membership). See SETUP.md.
 //
 
 import Foundation

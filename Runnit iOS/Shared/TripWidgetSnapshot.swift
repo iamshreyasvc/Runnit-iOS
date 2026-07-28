@@ -1,14 +1,15 @@
 //
 //  TripWidgetSnapshot.swift
-//  Runnit iOS  +  RunnitWidgets  (shared — add to BOTH targets)
+//  Runnit iOS  (shared with RunnitWidgets)
 //
 //  The Home Screen / Lock Screen widget can't reach into SwiftData directly
 //  without recreating the whole store, so the app instead writes a tiny snapshot
 //  of the trips worth showing into a shared App Group container, and the widget
 //  reads just that. This is the shape of that snapshot.
 //
-//  IMPORTANT (Xcode setup): add this file to both targets, and enable the App
-//  Group `group.Runnit.Runnit-iOS` on each. See SETUP.md.
+//  It lives under `Runnit iOS/Shared/` so it compiles into the app automatically.
+//  When you create the widget-extension target, also add this file to it, and
+//  enable the App Group `group.Runnit.Runnit-iOS` on both targets. See SETUP.md.
 //
 
 import Foundation

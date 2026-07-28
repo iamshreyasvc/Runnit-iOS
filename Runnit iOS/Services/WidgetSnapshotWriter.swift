@@ -18,9 +18,8 @@ enum WidgetSnapshotWriter {
     private static let maxEntries = 5
 
     static func write(trips: [Trip], records: [FlightStatusRecord], now: Date = Date()) {
-        // Trips worth showing: real ones that are either underway or still ahead.
+        // Trips worth showing: ones that are either underway or still ahead.
         let candidates = trips.filter { trip in
-            guard !trip.isSample else { return false }
             let underway = TripStatus(trip: trip, records: records, now: now) != nil
             return underway || trip.isUpcoming
         }

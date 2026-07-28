@@ -39,16 +39,15 @@ has **not** been built. Please verify in Xcode / CI.
    - `Info.plist` (set as the target's Info.plist in Build Settings) and
      `RunnitWidgets.entitlements` (set as `CODE_SIGN_ENTITLEMENTS`).
 
-## 2. Shared files → both targets
+## 2. Shared files → also add to the widget target
 
-These live in **`Shared/`** and must belong to **both** the app and the widget
-target (select each file → File Inspector → Target Membership):
+These live in **`Runnit iOS/Shared/`**, so they already compile into the **app**
+target (the "Runnit iOS" folder is a synchronized group). They also need to belong
+to the **widget** target — select each file → File Inspector → Target Membership →
+check **RunnitWidgets**:
 
-- `Shared/TripActivityAttributes.swift`
-- `Shared/TripWidgetSnapshot.swift`
-
-> The app already references these (`TripLiveActivity`, `WidgetSnapshotWriter`), so
-> the app won't compile until they're in the app target.
+- `Runnit iOS/Shared/TripActivityAttributes.swift`
+- `Runnit iOS/Shared/TripWidgetSnapshot.swift`
 
 ## 3. App Group (for the widget snapshot)
 
@@ -64,7 +63,7 @@ container. Create the group once and enable it on both targets.
    (`RunnitWidgets.entitlements` already declares it).
 
 > Using a different group id? Change the single constant in
-> `Shared/TripWidgetSnapshot.swift` (`WidgetSharing.appGroup`) and both
+> `Runnit iOS/Shared/TripWidgetSnapshot.swift` (`WidgetSharing.appGroup`) and both
 > `.entitlements` files.
 
 ## 4. Live Activities plist key
@@ -110,8 +109,8 @@ Until then, travelers can add passes they already have (§ "What already works")
 
 ## Quick verification checklist
 
-- [ ] App target compiles (shared files are members).
-- [ ] `RunnitWidgets` target compiles (its 4 sources + Info.plist + entitlements).
+- [ ] App target compiles (it should out of the box — shared files are under `Runnit iOS/Shared/`).
+- [ ] `RunnitWidgets` target compiles (its 4 sources + the 2 shared files + Info.plist + entitlements).
 - [ ] App Group `group.Runnit.Runnit-iOS` on both targets.
 - [ ] Run the app, open a trip that's underway → a Live Activity appears on the
       Lock Screen / Dynamic Island.

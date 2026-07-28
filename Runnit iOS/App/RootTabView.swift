@@ -81,7 +81,6 @@ struct RootTabView: View {
     /// retimed leg, but not on unrelated writes.
     private var tripSignature: String {
         trips
-            .filter { !$0.isSample }
             .sorted { $0.id.uuidString < $1.id.uuidString }
             .map { "\($0.id.uuidString):\($0.departureDate.timeIntervalSince1970)" }
             .joined(separator: "|")

@@ -84,7 +84,7 @@ enum TripNotifications {
         let now = Date()
         var requests: [UNNotificationRequest] = []
 
-        for trip in trips where !trip.isSample && trip.isUpcoming {
+        for trip in trips where trip.isUpcoming {
             let legs = trip.displaySegments
             guard let first = legs.first else { continue }
 
@@ -185,7 +185,7 @@ enum TripNotifications {
         let now = Date()
         let bySegment = Dictionary(grouping: records, by: \.segmentID)
 
-        for trip in trips where !trip.isSample {
+        for trip in trips {
             for leg in trip.displaySegments where leg.type == .flight {
                 guard let record = bySegment[leg.id]?.first,
                       record.isDisplayable(for: leg, now: now),
