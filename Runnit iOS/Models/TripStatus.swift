@@ -238,6 +238,26 @@ struct TripStatus {
         return min(max(now.timeIntervalSince(start) / span, 0), 1)
     }
 
+    /// The absolute time window the current progress spans, when it has one.
+    /// Mirrors `progress` exactly, but returns the endpoints rather than the
+    /// fraction — so a Live Activity can drive a self-updating bar from a single
+    /// update, no per-minute pushes needed.
+    var progressInterval: (start: Date, end: Date)? {
+        switch phase {
+        case .boarding(let segment):
+            let departs = departure(of: segment)
+            return (departs.addingTimeInterval(-Self.leadTime), departs)
+        case .inTransit(let segment):
+            guard let arrives = arrival(of: segment) else { return nil }
+            return (departure(of: segment), arrives)
+        case .waiting(let arrived, let next):
+            guard let landed = arrival(of: arrived) else { return nil }
+            return (landed, departure(of: next))
+        case .arrived:
+            return nil
+        }
+    }
+
     /// Time left in the current stretch, for the countdown line.
     var timeRemaining: TimeInterval? {
         let target: Date?

@@ -29,6 +29,9 @@ struct PassportView: View {
     @GestureState private var sheetDrag: CGFloat = 0
     @Namespace private var pillNamespace
 
+    // Milestones that just unlocked, queued for their celebratory drop-in.
+    @State private var celebrationQueue: [Achievement] = []
+
     private let accent = Color.indigo
 
     private var stats: TripStatistics { TripStatistics(trips: allTrips) }
@@ -75,6 +78,11 @@ struct PassportView: View {
             .navigationDestination(item: $selectedTrip) { TripDetailView(trip: $0) }
             .fullScreenCover(isPresented: $showingFullMap) {
                 FullMapView(trips: pastTrips, title: "Where I've Been")
+            }
+            // Celebrate any milestone that unlocked since the last visit.
+            .overlay { AchievementCelebration(queue: $celebrationQueue) }
+            .task(id: stats.achievements) {
+                celebrationQueue += AchievementTracker.newlyUnlocked(from: stats.achievements)
             }
         }
     }

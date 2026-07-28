@@ -8,7 +8,7 @@ Runnit's biggest differentiator vs. a manual log would be **live status**, like 
 
 - **Flights/trains live status** — gate/terminal/platform, delays, boarding, and a live position on the map.
 - **Hook already in place:** `Services/FlightStatusProvider.swift` is a protocol with a no-op `ManualFlightStatusProvider`. A real implementation backed by an aviation API (e.g. **AeroAPI** or **AviationStack**) can slot in behind it without touching the views. Requires an API key and likely a paid plan.
-- **Delay push notifications / Live Activities** — alert when a tracked flight's gate or time changes; a Lock Screen / Dynamic Island Live Activity for the active trip.
+- ~~**Delay push notifications / Live Activities** — alert when a tracked flight's gate or time changes; a Lock Screen / Dynamic Island Live Activity for the active trip.~~ **Shipped** (local notifications + a Lock Screen / Dynamic Island Live Activity). Delay alerts are surfaced from data the app already has rather than server push. See `Services/TripNotifications.swift`, `Services/TripLiveActivity.swift`, and `RunnitWidgets/TripLiveActivityWidget.swift`. Widget-target wiring is in `SETUP.md`.
 
 ## Sync & sharing
 
@@ -29,11 +29,12 @@ Runnit's biggest differentiator vs. a manual log would be **live status**, like 
 ## Passport & stats
 
 - **More "tidbits"** — richer Passport content (longest streak, busiest month, favorite route, new-countries-this-year, map heat of visited regions).
-- **Achievements / stamps** — unlockable stamps for milestones (first international trip, 10 countries, etc.).
+- **Achievements / stamps** — unlockable stamps for milestones (first international trip, 10 countries, etc.). Badges shipped in `PassportInsights.swift`; a newly-earned milestone now gets a one-time celebratory drop-in (`Views/Passport/AchievementCelebration.swift`, `Services/AchievementTracker.swift`).
 
 ## Platform extras
 
-- **Home Screen widgets** — next upcoming trip / countdown.
+- ~~**Home Screen widgets** — next upcoming trip / countdown.~~ **Shipped** — a "Next Trip" widget for the Home Screen (small/medium) and Lock Screen (rectangular/circular/inline), fed by an App Group snapshot the app writes (`RunnitWidgets/NextTripWidget.swift`, `Services/WidgetSnapshotWriter.swift`). Widget-target wiring is in `SETUP.md`.
+- **Apple Wallet passes** — adding an existing boarding pass to Wallet is shipped (Trip menu → "Add boarding pass to Wallet"). *Generating* a pass from trip data is scaffolded (`Services/PassGenerator.swift`) but needs a Pass Type ID certificate + a signing step — see `SETUP.md`.
 - **Apple Watch app** — glanceable next trip and boarding info.
 - **App Shortcuts / Siri** — "Add a trip", "When's my next flight?".
 
