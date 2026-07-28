@@ -11,7 +11,11 @@
 	  GENERATE_INFOPLIST_FILE is still YES; Xcode merges the generated keys (scene
 	  manifest, launch screen, orientations, location usage string, etc.) on top of
 	  this file at build time — this file only adds what can't be expressed as a
-	  flat INFOPLIST_KEY_* build setting. Nothing currently qualifies.
+	  flat INFOPLIST_KEY_* build setting.
 	-->
+
+	<!-- Lets the app run Live Activities for trips that are under way. -->
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 </dict>
 </plist>
