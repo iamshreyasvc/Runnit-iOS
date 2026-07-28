@@ -342,11 +342,11 @@ struct LegEditorView: View {
     private var trainLookupCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Auto-fill", systemImage: "sparkle.magnifyingglass").font(.headline)
-            Text("Enter an Indian Railways train number and date to fill in the stations, train name, and times.")
+            Text("Enter a train number \u{2014} Indian Railways or Amtrak \u{2014} and a date to fill in the stations, train name, and times.")
                 .font(.caption).foregroundStyle(.secondary)
 
             HStack(spacing: 10) {
-                TextField("Train number (e.g. 12608)", text: $lookupNumber)
+                TextField("Train number (e.g. 12608 or 1)", text: $lookupNumber)
                     .keyboardType(.numberPad)
                     .autocorrectionDisabled()
                     .onSubmit { Task { await runTrainLookup() } }

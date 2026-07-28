@@ -73,9 +73,13 @@ struct AddTripFlowView: View {
     /// stamped departure time) so editing the picker re-searches without the
     /// lookup's own write looping back and re-triggering it.
     @State private var lookupDate = Date()
-    /// For a train leg: whether it's an Indian Railways service (only those can be
-    /// auto-filled from erail). `nil` until asked.
-    @State private var isIndianTrain: Bool?
+    /// For a train leg: which railway it is, which decides whether — and how — the
+    /// number can be auto-filled. `nil` until asked.
+    @State private var selectedRailway: RailwayChoice?
+
+    /// The auto-fillable railways, plus "another railway" (manual entry). Indian
+    /// Railways fills from erail; Amtrak from the bundled GTFS timetable.
+    private enum RailwayChoice { case indian, amtrak, manual }
 
     @AppStorage(PrefKey.appearance) private var appearanceRaw = AppAppearance.dark.rawValue
 
@@ -87,12 +91,12 @@ struct AddTripFlowView: View {
         // Flights start with a number+date lookup that can auto-fill the rest;
         // the manual steps stay available behind "Enter details manually".
         if draft.type == .flight { s += [.flightLookup] }
-        // Trains first ask whether they're an Indian Railways service; only those
-        // can be auto-filled from a number, so the lookup step is gated on a "yes".
-        // The manual steps stay available behind "Enter details manually".
+        // Trains first ask which railway they are; Indian Railways and Amtrak can
+        // be auto-filled from a number, so the lookup step is gated on one of
+        // those. The manual steps stay available behind "Enter details manually".
         if draft.type == .train {
             s += [.trainCountry]
-            if isIndianTrain == true { s += [.trainLookup] }
+            if selectedRailway == .indian || selectedRailway == .amtrak { s += [.trainLookup] }
         }
         s += [.origin, .destination, .when]
         s += draft.type.isScheduledTransit ? [.carrier, .number, .details] : []
@@ -704,44 +708,67 @@ extension AddTripFlowView {
         lookupApplied = false
         lookingUp = false
         lookupDate = draft.departureDate
-        isIndianTrain = nil
+        selectedRailway = nil
     }
 
     // MARK: Train country step
 
-    /// Two choices: Indian Railways (unlocks the number look-up) or any other
-    /// railway (goes straight to manual entry).
+    /// Three choices: Indian Railways or Amtrak (each unlocks the number look-up),
+    /// or any other railway (goes straight to manual entry).
     private var trainCountryInput: some View {
         VStack(spacing: 12) {
             trainCountryOption(
                 title: "Indian Railways",
                 blurb: "Auto-fill stations and times from the train number.",
-                symbol: "sparkle.magnifyingglass",
-                selected: isIndianTrain == true
+                selected: selectedRailway == .indian,
+                icon: { countryIcon(.india) }
             ) {
-                isIndianTrain = true
+                selectedRailway = .indian
+                next()
+            }
+            trainCountryOption(
+                title: "Amtrak",
+                blurb: "Auto-fill stations and times from the train number.",
+                selected: selectedRailway == .amtrak,
+                icon: { countryIcon(.unitedStates) }
+            ) {
+                selectedRailway = .amtrak
                 next()
             }
             trainCountryOption(
                 title: "Another railway",
                 blurb: "Enter the details yourself.",
-                symbol: "square.and.pencil",
-                selected: isIndianTrain == false
+                selected: selectedRailway == .manual,
+                icon: { symbolIcon("square.and.pencil") }
             ) {
-                isIndianTrain = false
+                selectedRailway = .manual
                 next()
             }
         }
     }
 
-    private func trainCountryOption(
-        title: String, blurb: String, symbol: String, selected: Bool, action: @escaping () -> Void
+    /// An SF Symbol railway icon, tinted to the train accent.
+    private func symbolIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 22, weight: .semibold))
+            .foregroundStyle(TripType.train.accent)
+    }
+
+    /// An outline of the country a railway serves, stroked in the train accent —
+    /// India for Indian Railways, the US for Amtrak.
+    private func countryIcon(_ outline: CountryOutline) -> some View {
+        outline
+            .stroke(TripType.train.accent, style: StrokeStyle(lineWidth: 2, lineJoin: .round))
+            .padding(11)
+    }
+
+    private func trainCountryOption<Icon: View>(
+        title: String, blurb: String, selected: Bool,
+        @ViewBuilder icon: () -> Icon, action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 16) {
-                Image(systemName: symbol)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(TripType.train.accent)
+                icon()
                     .frame(width: 52, height: 52)
                     .background(TripType.train.accent.opacity(0.16), in: .rect(cornerRadius: 15))
                 VStack(alignment: .leading, spacing: 3) {
@@ -768,7 +795,8 @@ extension AddTripFlowView {
     @ViewBuilder
     private var trainLookupInput: some View {
         VStack(spacing: 16) {
-            bigField($lookupNumber, placeholder: "Train number (e.g. 12608)")
+            bigField($lookupNumber, placeholder: selectedRailway == .amtrak
+                     ? "Train number (e.g. 1)" : "Train number (e.g. 12608)")
                 .keyboardType(.numberPad)
 
             DatePicker("Travel date", selection: Binding(
@@ -826,20 +854,28 @@ extension AddTripFlowView {
         .task(id: trainLookupKey) { await autoTrainLookup() }
     }
 
+    /// The typed number normalised for the chosen railway — 5 digits for Indian
+    /// Railways, 1–4 for Amtrak — or nil until it's a complete number.
+    private var normalizedLookupNumber: String? {
+        selectedRailway == .amtrak
+            ? AmtrakSchedule.normalizedNumber(from: lookupNumber)
+            : TrainAutofill.normalizedNumber(from: lookupNumber)
+    }
+
     /// Identifies a train lookup: the normalised number plus the travel day.
     /// Changing either re-fires the search; the lookup's write to
     /// `draft.departureDate` doesn't, since the key reads `lookupDate` instead.
     private var trainLookupKey: String {
-        let number = TrainAutofill.normalizedNumber(from: lookupNumber) ?? ""
+        let number = normalizedLookupNumber ?? ""
         let day = Calendar.current.startOfDay(for: lookupDate)
         return "\(number)@\(day.timeIntervalSinceReferenceDate)"
     }
 
     /// Auto-search triggered by edits to the number or date. Waits briefly so a
     /// burst of edits settles into a single lookup, and no-ops until the number
-    /// is a complete 5-digit train number.
+    /// is complete for the chosen railway.
     private func autoTrainLookup() async {
-        guard TrainAutofill.normalizedNumber(from: lookupNumber) != nil else { return }
+        guard normalizedLookupNumber != nil else { return }
         try? await Task.sleep(for: .milliseconds(400))
         guard !Task.isCancelled else { return }
         await runWizardTrainLookup()
@@ -964,7 +1000,7 @@ extension AddTripFlowView {
         switch step {
         case .type:        return legs.isEmpty ? "Plan a new trip" : "Add another leg"
         case .flightLookup: return "What's your flight?"
-        case .trainCountry: return "Is this an Indian train?"
+        case .trainCountry: return "Which railway is this?"
         case .trainLookup: return "What's your train?"
         case .origin:      return "Where are you starting?"
         case .destination: return "And where to?"
@@ -983,8 +1019,8 @@ extension AddTripFlowView {
         switch step {
         case .type:        return legs.isEmpty ? "Start with your first leg — how are you travelling?" : "How are you travelling this leg?"
         case .flightLookup: return "Enter your flight number and date — we'll fill in the rest."
-        case .trainCountry: return "Indian Railways trains can be auto-filled from their number."
-        case .trainLookup: return "Enter your Indian Railways train number and date — we'll fill in the rest."
+        case .trainCountry: return "Indian Railways and Amtrak trains can be auto-filled from their number."
+        case .trainLookup: return "Enter your train number and date — we'll fill in the rest."
         case .origin:      return legs.isEmpty ? "Search an airport, station, city, or address." : "Starts where your last leg ended — change it if you like."
         case .destination: return "Where this leg ends."
         case .when:        return "Pick your departure — add an arrival if you know it."
