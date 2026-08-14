@@ -12,8 +12,18 @@ Runnit's biggest differentiator vs. a manual log would be **live status**, like 
 
 ## Sync & sharing
 
-- **iCloud sync (CloudKit)** — currently SwiftData is local-only. Enabling CloudKit is a modest change (add the entitlement + a CloudKit-backed `ModelConfiguration`) so trips sync across iPhone/iPad.
-- **Trip sharing** — share a trip or a "passport" summary with friends.
+- **iCloud sync (CloudKit)** — **built, gated off.** Needs a paid Apple Developer
+  account: free "personal teams" cannot use the iCloud capability at all. Flip
+  `RunnitCloudKitEnabled` in `Config/Info.plist` once enrolled. `Services/Sync/` drives `CKSyncEngine`
+  `Services/Sync/` drives `CKSyncEngine` over a private and a shared database,
+  with SwiftData still the local source of truth. The CloudKit schema also has to
+  be deployed to Production before any TestFlight build.
+- **Trip sharing** — **built, gated off** with the above. Invite people to a trip with view-only or can-edit
+  access, per person, managed from the trip's People screen.
+- **Passport sharing** — still open: share a "passport" summary with friends.
+- **Sharing beyond iCloud** — the CloudKit choice means guests need an Apple
+  account and there's no Android or web path. Revisit only if that becomes a real
+  constraint; it would mean a server and an auth system.
 
 ## Navigation & maps
 

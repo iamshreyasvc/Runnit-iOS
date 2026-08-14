@@ -14,6 +14,8 @@ enum AppTab: String, Hashable {
 }
 
 struct RootTabView: View {
+    @State private var acceptance = ShareAcceptanceCoordinator.shared
+
     @AppStorage(PrefKey.appearance) private var appearanceRaw = AppAppearance.dark.rawValue
     private var appearance: AppAppearance {
         #if DEBUG
@@ -56,6 +58,34 @@ struct RootTabView: View {
         // Zero-sized and non-interactive: it only mirrors the live trips onto
         // the Lock Screen, and must run regardless of the selected tab.
         .background(TripLiveActivitySync())
+        // Accepting an invite happens outside any screen — the app is opened by
+        // a link in Messages. Both the wait and the failure need somewhere to
+        // show, or tapping an invite looks like nothing happened.
+        .overlay(alignment: .top) {
+            if acceptance.isAccepting { joiningBanner }
+        }
+        .animation(.smooth(duration: 0.3), value: acceptance.isAccepting)
+        .alert("Couldn't open this trip",
+               isPresented: .init(get: { acceptance.failureMessage != nil },
+                                  set: { if !$0 { acceptance.failureMessage = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(acceptance.failureMessage ?? "")
+        }
+    }
+
+    /// A brief glass pill while an invite is being accepted.
+    private var joiningBanner: some View {
+        HStack(spacing: 9) {
+            ProgressView().controlSize(.small)
+            Text("Joining trip…")
+                .font(.subheadline.weight(.semibold))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .glassEffect(.regular, in: .capsule)
+        .padding(.top, 8)
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 }
 
@@ -64,5 +94,6 @@ struct RootTabView: View {
     RootTabView()
         .modelContainer(PreviewData.container)
         .environment(FlightTracker())
+        .environment(PreviewData.sync)
 }
 #endif

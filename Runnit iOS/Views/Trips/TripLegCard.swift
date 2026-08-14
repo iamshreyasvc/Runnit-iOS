@@ -37,8 +37,11 @@ struct TripLegCard: View {
 
     private var isExpanded: Bool { expanded.contains(segment.id) }
     private var accent: Color { segment.type.accent }
-    /// Only a drive has stops along the way to add or reorder.
-    private var editsStops: Bool { segment.type == .roadTrip }
+    /// Only a drive has stops along the way to add or reorder — and only when we
+    /// have write access to the trip. A view-only guest sees the same rail with
+    /// the same stops, just without the affordances to change them; hiding them
+    /// reads more cleanly than a row of greyed-out controls.
+    private var editsStops: Bool { segment.type == .roadTrip && trip.canEdit }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -343,7 +346,14 @@ struct TripLegCard: View {
         saveAndReroute()
     }
 
-    private func save() { try? context.save() }
+    /// Persist, stamping the leg and its trip as edited so the sync engine's
+    /// sweep picks the change up. Stop changes don't touch the trip's summary,
+    /// so nothing else would mark them dirty.
+    private func save() {
+        segment.updatedAt = Date()
+        trip.touch()
+        try? context.save()
+    }
 
     /// Persist a stop change, then re-fetch the leg's road-following route so the
     /// map redraws through the new stop set right away. Kicked off here, at the

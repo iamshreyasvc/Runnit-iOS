@@ -177,7 +177,10 @@ enum PreviewData {
     )
 
     static let container: ModelContainer = {
-        let config = ModelConfiguration(isStoredInMemoryOnly: true)
+        // `.none` matches the app's real container: with the iCloud entitlement
+        // present, SwiftData would otherwise turn its own CloudKit mirroring on
+        // and fail to load (`Trip.segments` is not optional).
+        let config = ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         let container = try! ModelContainer(
             for: Trip.self, TripSegment.self, FlightStatusRecord.self, configurations: config
         )
@@ -189,5 +192,10 @@ enum PreviewData {
         }
         return container
     }()
+
+    /// A sync engine for previews. Never started, so it stays `.idle` and makes
+    /// no CloudKit calls — previews run without an iCloud account.
+    @MainActor
+    static let sync = SyncEngine(modelContainer: container)
 }
 #endif

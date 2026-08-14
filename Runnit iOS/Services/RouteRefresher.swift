@@ -107,6 +107,11 @@ enum RouteRefresher {
             }
         }
         if context.hasChanges {
+            // A computed route is worth sharing: everyone on the trip then sees
+            // the real road or flown track without re-fetching it themselves.
+            for segment in segments where segment.hasChanges {
+                segment.updatedAt = Date()
+            }
             try? context.save()
         }
     }

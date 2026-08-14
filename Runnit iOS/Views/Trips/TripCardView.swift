@@ -17,6 +17,7 @@ struct TripCardView: View {
     /// Cached snapshots for this trip's flight legs only — enough to flag a
     /// connection in trouble. Cache-only: the list never fetches.
     @Query private var statusRecords: [FlightStatusRecord]
+    @Environment(SyncEngine.self) private var sync
 
     init(trip: Trip) {
         self.trip = trip
@@ -45,7 +46,12 @@ struct TripCardView: View {
             Text(modeLabel)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(trip.type.accent)
-            Spacer()
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            TripSyncBadge(state: trip.syncState.resolved(cloudAvailable: sync.isCloudAvailable))
+            if trip.isShared {
+                ParticipantStack(participants: trip.collaborators, size: 20)
+            }
             countdownChip
         }
     }
@@ -73,8 +79,13 @@ struct TripCardView: View {
         }
     }
 
+    /// The mode, or leg count for a multi-modal trip. A trip someone shared with
+    /// us is named for them — "Priya's Flight" — so a mixed list reads as whose
+    /// trip is whose without needing a second badge to say so.
     private var modeLabel: String {
-        trip.isMultiModal ? "\(trip.legCount) legs" : trip.type.label
+        let base = trip.isMultiModal ? "\(trip.legCount) legs" : trip.type.label
+        guard !trip.isOwnedByMe, let owner = trip.ownerParticipant else { return base }
+        return "\(owner.shortName)'s \(base)"
     }
 
     private var countdownChip: some View {
@@ -245,5 +256,6 @@ struct DashedLine: Shape {
     }
     .background(.blue.opacity(0.1))
     .modelContainer(PreviewData.container)
+    .environment(PreviewData.sync)
 }
 #endif

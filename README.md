@@ -34,7 +34,10 @@ Select an iOS 26 simulator (or a device) and run. On first launch the app seeds 
 
 ## Architecture
 
-Local-first and dependency-free. All data lives on-device via SwiftData.
+Local-first and dependency-free. SwiftData is the source of truth on-device.
+A CloudKit layer syncs it across devices and to anyone you share a trip with —
+built, tested, and currently **switched off** (see below), with the app fully
+usable either way.
 
 ```
 Runnit iOS/
@@ -42,6 +45,7 @@ Runnit iOS/
 ├── Models/         Trip (@Model) + Place (Codable value type) + samples
 ├── Services/       LocationSearch, MapsLauncher, RouteEstimator,
 │                   TripStatistics, FlightStatusProvider (future-live seam)
+│   └── Sync/       CloudKit: RecordCodec, SyncEngine, SyncTracker, ShareManager
 ├── Support/        DesignSystem, AppBackground, Preferences
 └── Views/          Trips (list, card, detail, add wizard), Passport, Account
 
@@ -53,7 +57,22 @@ Key decisions:
 
 - **Manual entry now, live-tracking-ready** — `FlightStatusProvider` is a protocol seam so a real aviation API (AeroAPI / AviationStack) can be dropped in later without touching the views.
 - **Apple Maps only** — road-trip directions and ETAs go through `MapsLauncher` / `RouteEstimator`, isolated so Google Maps / Waze can be added later.
-- **Local storage** — SwiftData only for v1; CloudKit sync is a small later change.
+- **SwiftData local, CloudKit as transport** — SwiftData has no `CKShare` API, so
+  rather than rewriting on Core Data the app keeps every `@Model` and `@Query` and
+  drives CloudKit itself through `CKSyncEngine` (`Services/Sync/`). Every trip owns
+  a CloudKit zone, which is what makes sharing one a matter of attaching a share
+  rather than moving records around.
+- **Sharing is per-person** — the trip's owner chooses view-only or can-edit for
+  each guest, and CloudKit enforces it server-side.
+- **CloudKit is gated off for now** — iCloud is unavailable to free Apple
+  developer accounts ("Personal development teams do not support the iCloud
+  capability"), and constructing a `CKContainer` without the entitlement crashes
+  the app. `RunnitCloudKitEnabled` in `Config/Info.plist` is the master switch,
+  read by `CloudContainer.isEnabled`. To turn sync on: enrol in the paid Apple
+  Developer Program, add the **iCloud → CloudKit** capability in Signing &
+  Capabilities (which registers the container and rewrites the entitlements
+  file), then flip the flag to `true`. With it off, every trip reports as not
+  saved to iCloud and the sharing controls stay hidden.
 
 See [ROADMAP.md](ROADMAP.md) for planned features and design directions.
 

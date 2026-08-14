@@ -337,6 +337,10 @@ struct AddEditTripView: View {
 
     private func save() {
         guard canSave else { return }
+        // A view-only guest shouldn't reach here — the Edit affordance is hidden
+        // for them — but CloudKit would reject the write, so don't pretend it
+        // succeeded if they somehow do.
+        if let trip, !trip.canEdit { dismiss(); return }
         isSaving = true
         let drafts = legs
         let tripTitle = title.trimmingCharacters(in: .whitespaces)
@@ -397,6 +401,9 @@ struct AddEditTripView: View {
                 seg.confirmation = emptyToNil(leg.confirmation)
                 seg.stops = leg.type == .roadTrip ? leg.stops : []
                 seg.order = i
+                // Stamp the leg so the sync sweep sees it; `refreshSummary()`
+                // below only stamps the trip.
+                seg.updatedAt = Date()
                 if flightChanged { deleteFlightRecord(segmentID: seg.id) }
                 keptIDs.insert(sid)
                 newList.append(seg)
