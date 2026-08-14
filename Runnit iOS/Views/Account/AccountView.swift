@@ -22,6 +22,11 @@ struct AccountView: View {
     @AppStorage(PrefKey.flightAutoRefresh) private var flightAutoRefresh = false
 
     @Environment(SyncEngine.self) private var sync
+    @AppStorage(PrefKey.notificationsEnabled) private var notificationsEnabled = false
+    @AppStorage(PrefKey.notifyCheckIn) private var notifyCheckIn = true
+    @AppStorage(PrefKey.notifyDeparture) private var notifyDeparture = true
+    @AppStorage(PrefKey.notifyDelays) private var notifyDelays = true
+    @AppStorage(PrefKey.liveActivitiesEnabled) private var liveActivitiesEnabled = true
 
     @State private var editingProfile = false
 
@@ -167,6 +172,7 @@ struct AccountView: View {
                     profileGroup
                     iCloudGroup
                     preferencesGroup
+                    notificationsGroup
                     flightTrackingGroup
                     aboutGroup
                 }
@@ -347,6 +353,54 @@ struct AccountView: View {
                     ForEach(DistanceUnit.allCases) { Text($0.label).tag($0.rawValue) }
                 }
                 .pickerStyle(.segmented)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .glassEffect(.regular, in: .rect(cornerRadius: 26))
+    }
+
+    // MARK: Notifications group
+
+    private var notificationsGroup: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            groupHeader("Notifications", systemImage: "bell.badge.fill")
+
+            Toggle(isOn: $notificationsEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Trip reminders")
+                    Text("Get a heads-up before your trips. Turning this on asks for notification permission.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .tint(accent)
+            .onChange(of: notificationsEnabled) { _, on in
+                if on { Task { await TripNotifications.requestAuthorization() } }
+            }
+
+            if notificationsEnabled {
+                rowDivider
+                Toggle("Check-in reminder", isOn: $notifyCheckIn).tint(accent)
+                Toggle("Time to head out", isOn: $notifyDeparture).tint(accent)
+                Toggle("Delay alerts", isOn: $notifyDelays).tint(accent)
+                Text("A day before a flight, a few hours before you leave, and whenever a tracked flight slips. All on-device — nothing leaves your phone.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            rowDivider
+
+            Toggle(isOn: $liveActivitiesEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Live Activities")
+                    Text("Show the trip in progress on your Lock Screen and Dynamic Island.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .tint(accent)
+            .onChange(of: liveActivitiesEnabled) { _, on in
+                #if canImport(ActivityKit)
+                if !on { TripLiveActivity.endAll() }
+                #endif
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

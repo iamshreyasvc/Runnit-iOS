@@ -18,7 +18,7 @@ struct FunFact: Identifiable {
 }
 
 /// A milestone badge — unlocked once, or shown dimmed with progress toward it.
-struct Achievement: Identifiable {
+struct Achievement: Identifiable, Equatable {
     let id = UUID()
     let icon: String
     let tint: Color
@@ -26,6 +26,12 @@ struct Achievement: Identifiable {
     let detail: String
     let isUnlocked: Bool
     let progress: Double
+
+    /// Two badges are the same milestone when they carry the same title — the
+    /// stable identity `AchievementTracker` and the celebration queue rely on.
+    static func == (lhs: Achievement, rhs: Achievement) -> Bool {
+        lhs.title == rhs.title && lhs.isUnlocked == rhs.isUnlocked
+    }
 }
 
 extension TripStatistics {
@@ -100,6 +106,14 @@ extension TripStatistics {
         let continentCount = continents.count
         let laps = totalDistanceMeters / Self.earthCircumference
 
+        // Mode-specific leg counts, for the road/rail badges.
+        let roadLegs = modeBreakdown.first { $0.type == .roadTrip }?.count ?? 0
+        let trainLegs = modeBreakdown.first { $0.type == .train }?.count ?? 0
+        // The most trips packed into any single calendar year.
+        let busiestYear = tripsByYear.map(\.count).max() ?? 0
+        // The longest single trip, in whole kilometers.
+        let longestKm = Int((longestTrip?.distanceMeters ?? 0) / 1000)
+
         let raw: [Achievement] = [
             badge("First Stamp", "airplane", .blue,
                   "Complete your first trip", value: totalTrips, goal: 1),
@@ -111,12 +125,22 @@ extension TripStatistics {
                   "Set foot on 3 continents", value: continentCount, goal: 3),
             badge("Frequent Flyer", "airplane.departure", .indigo,
                   "Take 10 flights", value: flightCount, goal: 10),
+            badge("Jet Setter", "airplane.circle.fill", .blue,
+                  "Take 50 flights", value: flightCount, goal: 50),
             badge("Explorer", "building.2.fill", .purple,
                   "Discover 10 cities", value: cities, goal: 10),
             badge("Around the World", "arrow.triangle.2.circlepath", .pink,
                   "Travel one lap of the Earth", value: Int(laps * 100), goal: 100),
             badge("Century Club", "suitcase.rolling.fill", .cyan,
-                  "Log 25 trips", value: totalTrips, goal: 25)
+                  "Log 25 trips", value: totalTrips, goal: 25),
+            badge("Road Warrior", "car.fill", .green,
+                  "Take 10 road trips", value: roadLegs, goal: 10),
+            badge("Rail Rider", "tram.fill", .orange,
+                  "Ride 5 trains", value: trainLegs, goal: 5),
+            badge("Long Hauler", "arrow.up.right.circle.fill", .mint,
+                  "Fly 10,000 km in one trip", value: longestKm, goal: 10_000),
+            badge("Busy Year", "calendar.badge.clock", .red,
+                  "Take 10 trips in a single year", value: busiestYear, goal: 10)
         ]
         return raw.sorted { ($0.isUnlocked ? 1 : 0, $0.progress) > ($1.isUnlocked ? 1 : 0, $1.progress) }
     }

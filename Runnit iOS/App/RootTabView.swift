@@ -16,6 +16,12 @@ enum AppTab: String, Hashable {
 struct RootTabView: View {
     @State private var acceptance = ShareAcceptanceCoordinator.shared
 
+    // Trips and their live records drive the notification schedule and the Home
+    // Screen widget snapshot; both are rebuilt whenever the data changes.
+    @Query private var trips: [Trip]
+    @Query private var statusRecords: [FlightStatusRecord]
+    @Environment(\.scenePhase) private var scenePhase
+
     @AppStorage(PrefKey.appearance) private var appearanceRaw = AppAppearance.dark.rawValue
     private var appearance: AppAppearance {
         #if DEBUG
@@ -72,6 +78,13 @@ struct RootTabView: View {
         } message: {
             Text(acceptance.failureMessage ?? "")
         }
+        // Keep local notifications and the widget snapshot in step with the data.
+        // A signature over the trips that matter (id + times) re-runs this only
+        // when something a notification or the widget would show actually moves.
+        .task(id: tripSignature) { await syncBackground() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await syncBackground() } }
+        }
     }
 
     /// A brief glass pill while an invite is being accepted.
@@ -86,6 +99,25 @@ struct RootTabView: View {
         .glassEffect(.regular, in: .capsule)
         .padding(.top, 8)
         .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    /// Rebuild the notification schedule and Home Screen snapshot, and surface any
+    /// delay the app has already learned about. Cheap and idempotent.
+    private func syncBackground() async {
+        await TripNotifications.reschedule(for: trips)
+        await TripNotifications.surfaceDelays(for: trips, records: statusRecords)
+        WidgetSnapshotWriter.write(trips: trips, records: statusRecords)
+    }
+
+    /// A fingerprint of the trips a notification or widget would show — their ids
+    /// and departure instants — so background sync re-runs on add, delete, or a
+    /// retimed leg, but not on unrelated writes.
+    private var tripSignature: String {
+        trips
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+            .map { "\($0.id.uuidString):\($0.departureDate.timeIntervalSince1970)" }
+            .joined(separator: "|")
+    }
     }
 }
 

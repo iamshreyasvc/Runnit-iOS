@@ -2,95 +2,147 @@
 //  TripLiveActivityWidget.swift
 //  RunnitWidgets
 //
-//  The Lock Screen card and the Dynamic Island for a trip in motion. The card is
-//  `TripActivityCard` verbatim — the same header, row, progress track and
-//  endpoint strip the app draws in its "Happening Now" box — so a glance at the
-//  Lock Screen and a glance at the Upcoming tab show the same thing.
-//
-//  The Dynamic Island is the same reading compressed: the mode icon and the
-//  countdown when collapsed, the full row's information when expanded.
+//  The Lock Screen and Dynamic Island presentation of a trip in progress. The app
+//  (Services/TripLiveActivity.swift) owns the lifecycle and feeds it a
+//  `TripActivityAttributes.ContentState`; this only draws.
 //
 
-import WidgetKit
 import SwiftUI
+import WidgetKit
 import ActivityKit
 
 struct TripLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: TripActivityAttributes.self) { context in
-            TripActivityCard(state: context.state)
-                .activityBackgroundTint(Color.black.opacity(0.55))
-                .activitySystemActionForegroundColor(context.state.accent.color)
-
+            // Lock Screen / banner presentation.
+            LockScreenLiveActivityView(attributes: context.attributes, state: context.state)
+                .activityBackgroundTint(context.state.tint.color.opacity(0.12))
+                .activitySystemActionForegroundColor(context.state.tint.color)
         } dynamicIsland: { context in
             let state = context.state
-            let tint = state.accent.color
-
+            let tint = state.tint.color
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     Label {
-                        Text(state.startCode)
+                        Text(state.departureCode).font(.caption).fontWeight(.semibold)
                     } icon: {
-                        Image(systemName: state.icon).foregroundStyle(tint)
+                        Image(systemName: state.legMode.symbol).foregroundStyle(tint)
                     }
-                    .font(.caption.weight(.semibold))
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text(state.endCode)
-                        .font(.caption.weight(.semibold))
+                    Text(state.punctuality)
+                        .font(.caption).fontWeight(.semibold)
+                        .foregroundStyle(tint)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     Text(state.headline)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.headline).fontWeight(.bold)
+                        .lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    VStack(spacing: 6) {
-                        TripActivityProgressTrack(
-                            progress: state.progress, icon: state.icon, tint: tint
-                        )
+                    VStack(spacing: 4) {
+                        LiveProgressBar(start: state.rangeStart, end: state.rangeEnd, tint: tint)
                         HStack {
-                            Text(state.punctuality)
-                                .foregroundStyle(tint)
+                            timeText(state.departureTime, code: state.departureCode)
                             Spacer()
-                            if let time = state.endTime {
-                                Text("\(state.endTitle) \(time)")
-                                    .foregroundStyle(state.endIsLate ? .orange : .secondary)
+                            if let end = state.rangeEnd, end > Date() {
+                                Text(timerInterval: Date()...end, countsDown: true)
+                                    .font(.caption2.weight(.semibold))
+                                    .monospacedDigit()
+                                    .multilineTextAlignment(.center)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: 70)
                             }
+                            Spacer()
+                            timeText(state.arrivalTime, code: state.arrivalCode)
                         }
-                        .font(.caption2.weight(.medium))
-                        .lineLimit(1)
                     }
                 }
             } compactLeading: {
-                Image(systemName: state.icon)
-                    .foregroundStyle(tint)
+                Image(systemName: state.legMode.symbol).foregroundStyle(tint)
             } compactTrailing: {
-                compactCountdown(state)
-                    .font(.caption2)
-                    .foregroundStyle(tint)
-                    .monospacedDigit()
-                    .frame(maxWidth: 46)
+                if let end = state.rangeEnd, end > Date() {
+                    Text(timerInterval: Date()...end, countsDown: true)
+                        .font(.caption2).monospacedDigit()
+                        .foregroundStyle(tint)
+                        .frame(maxWidth: 44)
+                } else {
+                    Text(state.arrivalCode).font(.caption2).foregroundStyle(tint)
+                }
             } minimal: {
-                Image(systemName: state.icon)
-                    .foregroundStyle(tint)
+                Image(systemName: state.legMode.symbol).foregroundStyle(tint)
             }
+            .widgetURL(URL(string: "runnit://trip/\(context.attributes.tripID)"))
             .keylineTint(tint)
         }
     }
 
-    /// Just the clock in the Island's trailing slot — the words that wrap it on
-    /// the full card don't fit here, and the number is the point.
-    ///
-    /// A bare `Text(timerInterval:)` reserves room for the widest value it could
-    /// ever hold, which stretches the collapsed pill to nearly the full width of
-    /// the screen for a countdown that will read "42:10". The caller caps it.
-    /// Nothing at all once there's no countdown left: the leading checkmark
-    /// already says the trip is done, and "Complete" spelled out is the widest
-    /// thing here for the least news.
-    @ViewBuilder
-    private func compactCountdown(_ state: TripActivityAttributes.ContentState) -> some View {
-        if let range = state.countdownRange {
-            Text(timerInterval: range, countsDown: true)
+    private func timeText(_ date: Date?, code: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(code).font(.caption2.weight(.bold))
+            if let date {
+                Text(date, style: .time)
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// The Lock Screen banner: a compact status card mirroring the in-app live card.
+struct LockScreenLiveActivityView: View {
+    let attributes: TripActivityAttributes
+    let state: TripActivityAttributes.ContentState
+
+    private var tint: Color { state.tint.color }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                if state.isUnderway {
+                    LivePulseDot(color: tint)
+                } else {
+                    Image(systemName: state.legMode.symbol)
+                        .font(.headline).foregroundStyle(tint)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(state.headline)
+                        .font(.headline).fontWeight(.bold)
+                        .lineLimit(1)
+                    if let subtitle = state.subtitle {
+                        Text(subtitle)
+                            .font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+                Text(state.punctuality)
+                    .font(.caption).fontWeight(.semibold)
+                    .foregroundStyle(tint)
+                    .padding(.horizontal, 9).padding(.vertical, 4)
+                    .background(tint.opacity(0.16), in: .capsule)
+            }
+
+            LiveProgressBar(start: state.rangeStart, end: state.rangeEnd, tint: tint)
+
+            HStack(alignment: .firstTextBaseline) {
+                endpoint(code: state.departureCode, time: state.departureTime, alignment: .leading)
+                Spacer(minLength: 0)
+                Image(systemName: state.legMode.symbol)
+                    .font(.caption2).foregroundStyle(tint)
+                Spacer(minLength: 0)
+                endpoint(code: state.arrivalCode, time: state.arrivalTime, alignment: .trailing)
+            }
+        }
+        .padding(16)
+    }
+
+    private func endpoint(code: String, time: Date?, alignment: HorizontalAlignment) -> some View {
+        VStack(alignment: alignment, spacing: 1) {
+            Text(code).font(.subheadline.weight(.bold))
+            if let time {
+                Text(time, style: .time)
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
         }
     }
 }

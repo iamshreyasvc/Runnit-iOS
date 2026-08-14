@@ -12,6 +12,8 @@
 import SwiftUI
 import SwiftData
 import MapKit
+import PassKit
+import UniformTypeIdentifiers
 
 struct TripDetailView: View {
     @Bindable var trip: Trip
@@ -31,6 +33,12 @@ struct TripDetailView: View {
     @State private var leaveError: String?
     @State private var showingFullMap = false
     @State private var expandedLegs: Set<UUID> = []
+
+    // Adding an existing boarding pass to Apple Wallet.
+    @State private var showingPassImporter = false
+    @State private var passesToAdd: [PKPass] = []
+    @State private var showingAddPasses = false
+    @State private var passError: String?
 
     // Map camera; `.automatic` frames the whole route. Tracked so the zoom
     // buttons scale around wherever the traveler has panned to.
@@ -84,6 +92,22 @@ struct TripDetailView: View {
         } message: {
             Text(leaveError ?? "")
         }
+        .sheet(isPresented: $showingAddPasses) {
+            AddPassesView(passes: passesToAdd) { showingAddPasses = false }
+                .ignoresSafeArea()
+        }
+        .fileImporter(isPresented: $showingPassImporter,
+                      allowedContentTypes: Self.passContentTypes) { result in
+            handlePassImport(result)
+        }
+        .alert("Couldn't add pass", isPresented: .init(
+            get: { passError != nil },
+            set: { if !$0 { passError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(passError ?? "")
+        }
+        }
         .fullScreenCover(isPresented: $showingFullMap) {
             FullMapView(trips: [trip], title: navigationTitle)
         }
@@ -102,8 +126,12 @@ struct TripDetailView: View {
             if let seg = primaryFlightSegment { await tracker.refresh(seg, in: context) }
             // Also advance the travelled track while a flight is in the air.
             await RouteRefresher.refresh(trip.displaySegments, in: context, tracker: tracker)
+            // A refresh may have just learned of a delay — surface it right away.
+            await TripNotifications.surfaceDelays(for: [trip], records: statusRecords)
+            syncLiveActivity()
         }
         .onAppear(perform: expandKeyLegs)
+        .onAppear(perform: syncLiveActivity)
         .task { await backfillTimeZones() }
         // Adding a stop re-plans the route, and the new one is often outside the
         // old frame — a stop added mid-drive reads as nothing having happened if
@@ -155,6 +183,11 @@ struct TripDetailView: View {
                 }
                 if trip.canEdit {
                     Button { showingEdit = true } label: { Label("Edit", systemImage: "pencil") }
+                }
+                if hasFlightLeg {
+                    Button { showingPassImporter = true } label: {
+                        Label("Add boarding pass to Wallet", systemImage: "wallet.pass")
+                    }
                 }
                 if trip.isOwnedByMe {
                     Button(role: .destructive) { showingDeleteConfirm = true } label: {
@@ -636,6 +669,46 @@ struct TripDetailView: View {
     /// The live reading for this trip, or nil when it isn't happening right now.
     private var liveStatus: TripStatus? {
         TripStatus(trip: trip, records: statusRecords)
+    }
+
+    /// UTTypes that count as a Wallet pass file, for the importer.
+    private static let passContentTypes: [UTType] = {
+        [UTType("com.apple.pkpass"), UTType(filenameExtension: "pkpass")].compactMap { $0 }
+    }()
+
+    private var hasFlightLeg: Bool {
+        trip.displaySegments.contains { $0.type == .flight }
+    }
+
+    /// Decode a picked `.pkpass` file and hand it to Wallet's own add sheet.
+    private func handlePassImport(_ result: Result<URL, Error>) {
+        switch result {
+        case .success(let url):
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: url) else {
+                passError = "That file couldn't be read."
+                return
+            }
+            let passes = WalletPassImporter.passes(from: data)
+            guard !passes.isEmpty else {
+                passError = "That doesn't look like a valid boarding pass."
+                return
+            }
+            passesToAdd = passes
+            showingAddPasses = true
+        case .failure(let error):
+            passError = error.localizedDescription
+        }
+    }
+
+    /// Bring the trip's Live Activity in step with its current status — started
+    /// when it's underway, updated as it changes, ended once it's over. A no-op on
+    /// platforms without ActivityKit.
+    private func syncLiveActivity() {
+        #if canImport(ActivityKit)
+        TripLiveActivity.sync(trip: trip, records: statusRecords)
+        #endif
     }
 
     /// Auto-expand the legs most worth seeing on open: the next/active flight, any

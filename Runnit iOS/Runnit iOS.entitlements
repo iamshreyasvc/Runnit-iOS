@@ -25,5 +25,11 @@
 	  to the foreground, or pull-to-refresh. Add the capability in Xcode and
 	  this key comes back with it.
 	-->
+	<!-- Shared with the RunnitWidgets extension so the Home/Lock Screen widget can
+	     read the trip snapshot this app writes (Services/WidgetSnapshotWriter). -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.Runnit.Runnit-iOS</string>
+	</array>
 </dict>
 </plist>

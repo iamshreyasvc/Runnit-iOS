@@ -2,16 +2,17 @@
 //  RunnitWidgetsBundle.swift
 //  RunnitWidgets
 //
-//  The extension's entry point. Only the trip Live Activity for now; home-screen
-//  widgets would join the bundle here.
+//  The widget extension's entry point. Bundles the Home/Lock Screen "Next Trip"
+//  widget and the trip Live Activity together.
 //
 
-import WidgetKit
 import SwiftUI
+import WidgetKit
 
 @main
 struct RunnitWidgetsBundle: WidgetBundle {
     var body: some Widget {
+        NextTripWidget()
         TripLiveActivityWidget()
     }
 }

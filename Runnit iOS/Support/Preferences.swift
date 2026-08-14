@@ -24,6 +24,25 @@ enum PrefKey {
     /// Smart Auto: allow one automatic flight-status fetch when opening a
     /// day-of / in-air flight. Off by default to conserve the API budget.
     static let flightAutoRefresh = "prefFlightAutoRefresh"
+
+    // MARK: Notifications
+    //
+    // A master switch plus a switch per kind. The master is off until the
+    // traveler turns it on (which is when we ask the system for permission);
+    // the per-kind switches default on, so enabling notifications gets you all
+    // three unless you pare them back.
+    static let notificationsEnabled = "prefNotificationsEnabled"
+    static let notifyCheckIn = "prefNotifyCheckIn"
+    static let notifyDeparture = "prefNotifyDeparture"
+    static let notifyDelays = "prefNotifyDelays"
+
+    /// Show a Lock Screen / Dynamic Island Live Activity for the trip in progress.
+    /// On by default; the system-wide Live Activities switch still applies.
+    static let liveActivitiesEnabled = "prefLiveActivitiesEnabled"
+
+    /// Achievement titles already celebrated, so a milestone is toasted once and
+    /// not again every time the Passport is opened. Stored as a JSON string array.
+    static let unlockedAchievements = "prefUnlockedAchievements"
 }
 
 /// The palette a traveler can pick for their profile avatar and hero card.
