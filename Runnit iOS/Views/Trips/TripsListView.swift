@@ -119,10 +119,16 @@ struct TripsListView: View {
                     emptyState
                 } else {
                     GeometryReader { proxy in
+                        let layout = MapLayout(containerSize: proxy.size)
                         ZStack(alignment: .bottom) {
                             mapBackground
-                            mapTopControls
-                            tripSheet(height: proxy.size.height)
+                            switch layout {
+                            case .stacked:
+                                tripSheet(height: proxy.size.height)
+                            case .sideBySide:
+                                tripPanel(layout: layout)
+                            }
+                            mapTopControls(layout: layout)
                         }
                     }
                 }
@@ -200,7 +206,7 @@ struct TripsListView: View {
             // Cross-fade the bodies with opacity so the shared pill's
             // matchedGeometry morph is the star of the transition.
             if sheetDetent == .minimized && !dragging {
-                minimizedPill
+                minimizedPill(layout: .stacked)
                     .transition(.opacity)
             } else {
                 expandedSheet(sheetHeight: live, containerHeight: height)
@@ -215,28 +221,8 @@ struct TripsListView: View {
     private func expandedSheet(sheetHeight: CGFloat, containerHeight: CGFloat) -> some View {
         VStack(spacing: 0) {
             grabHandle(height: containerHeight)
-            // Pinned header: the title pill, with the year filter inline beside it
-            // as a dropdown that opens a bubble popover.
-            HStack(spacing: 10) {
-                filterPill(minimized: false)
-                Spacer(minLength: 0)
-                if !years.isEmpty { yearDropdown }
-            }
-            .padding(.horizontal)
-            .padding(.bottom, 12)
-
-            ScrollView {
-                VStack(spacing: 16) {
-                    if showsLiveSection {
-                        ActiveTripsBox(trips: shown) { selectedTrip = $0 }
-                    }
-                    cardsList
-                }
-                .padding(.horizontal)
-                .padding(.top, 2)
-                .padding(.bottom, 48)
-            }
-            .scrollIndicators(.hidden)
+            panelHeader(layout: .stacked)
+            panelContent
         }
         .frame(height: sheetHeight, alignment: .top)
         .frame(maxWidth: .infinity)
@@ -248,29 +234,124 @@ struct TripsListView: View {
         }
     }
 
+    /// Pinned header shared by the bottom sheet and the landscape panel: the
+    /// title pill, the year filter, and — in landscape, where the panel can be
+    /// tucked away — the collapse control. One row in both layouts; the panel
+    /// just shrinks the type and padding to fit its narrower column.
+    private func panelHeader(layout: MapLayout) -> some View {
+        let compact = layout.usesCompactChrome
+        return HStack(spacing: compact ? 8 : 10) {
+            filterPill(compact: compact)
+            Spacer(minLength: 0)
+            if !years.isEmpty { yearDropdown(compact: compact) }
+            if compact { collapseButton }
+        }
+        // `nil` keeps the platform default, leaving the portrait sheet untouched.
+        .padding(.horizontal, compact ? 12 : nil)
+        .padding(.top, compact ? 14 : 0)
+        .padding(.bottom, 12)
+    }
+
+    /// The scrolling body shared by the bottom sheet and the landscape panel.
+    private var panelContent: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                if showsLiveSection {
+                    ActiveTripsBox(trips: shown) { selectedTrip = $0 }
+                }
+                cardsList
+            }
+            .padding(.horizontal)
+            .padding(.top, 2)
+            .padding(.bottom, 48)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    // MARK: Landscape side panel
+
+    /// The landscape counterpart of the trip sheet: a floating glass card on the
+    /// leading edge, full height, with the map fully visible beside it. Collapses
+    /// to the same floating pill — swipe the panel toward the leading edge (or
+    /// tap the chevron) to tuck it away, and tap the pill to bring it back.
+    private func tripPanel(layout: MapLayout) -> some View {
+        // A leading column the full height of the safe area. The panel fills it;
+        // the collapsed pill sits at its bottom, where the sheet's pill lives in
+        // portrait, so the morph between the two reads as the same object.
+        HStack(spacing: 0) {
+            Group {
+                if sheetDetent == .minimized {
+                    minimizedPill(layout: layout)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                        .transition(.opacity)
+                } else {
+                    VStack(spacing: 0) {
+                        panelHeader(layout: layout)
+                        panelContent
+                    }
+                    .frame(width: layout.panelWidth, alignment: .top)
+                    .frame(maxHeight: .infinity)
+                    .background {
+                        RoundedRectangle(cornerRadius: 26, style: .continuous)
+                            .fill(.ultraThinMaterial)
+                            .shadow(color: .black.opacity(0.18), radius: 14, x: 3)
+                    }
+                    .gesture(
+                        DragGesture(coordinateSpace: .global).onEnded { value in
+                            if value.translation.width < -40 { sheetDetent = .minimized }
+                        }
+                    )
+                    .transition(.opacity)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, layout.gutter)
+        .padding(.vertical, layout.gutter)
+        .animation(.snappy(duration: 0.32), value: sheetDetent)
+    }
+
+    /// Tucks the landscape panel away, leaving the whole map clear.
+    private var collapseButton: some View {
+        Button {
+            sheetDetent = .minimized
+        } label: {
+            Image(systemName: "chevron.left")
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 34, height: 34)
+                .glassEffect(.regular, in: .circle)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Hide trip list")
+    }
+
     /// The tab title as a liquid-glass pill — icon, "Upcoming"/"Past", and count.
     /// Shares a matchedGeometry id so it morphs into the minimized floating pill.
-    private func filterPill(minimized: Bool) -> some View {
-        HStack(spacing: 10) {
+    /// `chevron` is the glyph hinting how to restore the collapsed list —
+    /// omitted while the sheet/panel is open.
+    private func filterPill(compact: Bool = false, chevron: String? = nil) -> some View {
+        HStack(spacing: compact ? 7 : 10) {
             Image(systemName: filter.symbol)
-                .font(.headline.weight(.bold))
+                .font((compact ? Font.subheadline : .headline).weight(.bold))
                 .foregroundStyle(filter.accent)
             Text(filter.rawValue)
-                .font(.title2.weight(.heavy))
+                .font((compact ? Font.headline : .title2).weight(.heavy))
+                .lineLimit(1)
             Text("\(displayed.count)")
-                .font(.subheadline.weight(.bold))
+                .font((compact ? Font.caption : .subheadline).weight(.bold))
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 3)
+                .padding(.horizontal, compact ? 7 : 9)
+                .padding(.vertical, compact ? 2 : 3)
                 .background(.secondary.opacity(0.15), in: .capsule)
-            if minimized {
-                Image(systemName: "chevron.up")
-                    .font(.subheadline.weight(.bold))
+            if let chevron {
+                Image(systemName: chevron)
+                    .font((compact ? Font.caption : .subheadline).weight(.bold))
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.horizontal, compact ? 14 : 20)
+        .padding(.vertical, compact ? 10 : 14)
         .glassEffect(.regular, in: .capsule)
         .matchedGeometryEffect(id: "filterPill", in: pillNamespace)
     }
@@ -305,14 +386,21 @@ struct TripsListView: View {
     /// The collapsed sheet: the title pill floating at the bottom. Tap it, or
     /// swipe it up, to bring the list back. It's the same pill as the sheet's
     /// title, so minimizing/restoring morphs between the two positions.
-    private var minimizedPill: some View {
-        filterPill(minimized: true)
+    private func minimizedPill(layout: MapLayout) -> some View {
+        let sideways = layout == .sideBySide
+        // Match the header pill's size in each layout so the matchedGeometry
+        // morph is a move, not a resize.
+        return filterPill(compact: sideways, chevron: sideways ? "chevron.right" : "chevron.up")
             .padding(.bottom, 10)
             .contentShape(.capsule)
             .onTapGesture { sheetDetent = .medium }
             .gesture(
+                // Restore with a swipe back out of the edge it tucked into.
                 DragGesture().onEnded { value in
-                    if value.translation.height < -24 { sheetDetent = .medium }
+                    let restored = sideways
+                        ? value.translation.width > 24
+                        : value.translation.height < -24
+                    if restored { sheetDetent = .medium }
                 }
             )
     }
@@ -321,8 +409,9 @@ struct TripsListView: View {
 
     /// Floating controls above the map: the live badge (or a tapped route's
     /// preview) on the left and the full-screen expand button on the right. Kept
-    /// out of the map's ignored safe area so they clear the navigation bar.
-    private var mapTopControls: some View {
+    /// out of the map's ignored safe area so they clear the navigation bar, and
+    /// in landscape inset past the side panel so nothing hides beneath it.
+    private func mapTopControls(layout: MapLayout) -> some View {
         VStack(spacing: 8) {
             HStack(alignment: .top) {
                 if previewTrip == nil, let status = liveStatus {
@@ -330,7 +419,9 @@ struct TripsListView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
                 Spacer(minLength: 0)
-                VStack(spacing: 10) {
+                // Landscape has far less height to spend, and the toolbar's add
+                // button sits directly above — draw the column tighter there.
+                VStack(spacing: layout.usesCompactChrome ? 6 : 10) {
                     Button {
                         showingFullMap = true
                     } label: {
@@ -361,9 +452,11 @@ struct TripsListView: View {
             }
         }
         .padding(.horizontal)
-        .padding(.top, 4)
+        .padding(.leading, layout.leadingInset(collapsed: sheetDetent == .minimized))
+        .padding(.top, layout.usesCompactChrome ? 12 : 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(.snappy(duration: 0.3), value: previewTrip?.persistentModelID)
+        .animation(.snappy(duration: 0.32), value: sheetDetent)
     }
 
     /// A clean vertical +/− zoom control, styled to match the round map buttons.
@@ -555,21 +648,22 @@ struct TripsListView: View {
 
     /// The year filter as a compact dropdown chip inline with the title pill.
     /// Tapping it opens a bubble popover that emerges from the pill row.
-    private var yearDropdown: some View {
+    private func yearDropdown(compact: Bool = false) -> some View {
         Button {
             showYearMenu = true
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: compact ? 5 : 8) {
                 Text(selectedYear.map(String.init) ?? "All")
-                    .font(.title2.weight(.heavy))
+                    .font((compact ? Font.subheadline : .title2).weight(.heavy))
                     .foregroundStyle(.primary)
+                    .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.subheadline.weight(.bold))
+                    .font((compact ? Font.caption2 : .subheadline).weight(.bold))
                     .foregroundStyle(filter.accent)
                     .rotationEffect(.degrees(showYearMenu ? 180 : 0))
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 14)
+            .padding(.horizontal, compact ? 12 : 18)
+            .padding(.vertical, compact ? 10 : 14)
             .glassEffect(.regular, in: .capsule)
         }
         .buttonStyle(.plain)
@@ -765,7 +859,13 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
 }
 
 #if DEBUG
-#Preview {
+#Preview("Portrait") {
+    TripsListView(filter: .upcoming)
+        .modelContainer(PreviewData.container)
+        .environment(FlightTracker())
+}
+
+#Preview("Landscape", traits: .landscapeLeft) {
     TripsListView(filter: .upcoming)
         .modelContainer(PreviewData.container)
         .environment(FlightTracker())
